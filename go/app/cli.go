@@ -201,7 +201,7 @@ func Cli(command string, strict bool, instance string, sibling string, owner str
 			if instanceKey == nil {
 				log.Fatal("Cannot deduce instance:", instance)
 			}
-			repointedSlaves, err, errs := inst.RepointSlaves(instanceKey, pattern)
+			repointedSlaves, err, errs := inst.RepointSlavesTo(instanceKey, pattern, siblingKey)
 			if err != nil {
 				log.Fatale(err)
 			} else {
@@ -492,6 +492,25 @@ func Cli(command string, strict bool, instance string, sibling string, owner str
 				log.Fatal("Cannot deduce instance:", instance)
 			}
 			_, err := inst.SetReadOnly(instanceKey, false)
+			if err != nil {
+				log.Fatale(err)
+			}
+			fmt.Println(instanceKey.DisplayString())
+		}
+	case cliCommand("flush-binary-logs"):
+		{
+			if instanceKey == nil {
+				instanceKey = thisInstanceKey
+			}
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			var err error
+			if *config.RuntimeCLIFlags.BinlogFile == "" {
+				err = inst.FlushBinaryLogs(instanceKey, 1)
+			} else {
+				_, err = inst.FlushBinaryLogsTo(instanceKey, *config.RuntimeCLIFlags.BinlogFile)
+			}
 			if err != nil {
 				log.Fatale(err)
 			}
