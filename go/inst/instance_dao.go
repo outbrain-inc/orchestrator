@@ -44,6 +44,14 @@ const topologyConcurrency = 100
 
 var topologyConcurrencyChan = make(chan bool, topologyConcurrency)
 
+type OperationGTIDHint string
+
+const (
+	GTIDHintDeny    OperationGTIDHint = "NoGTID"
+	GTIDHintNeutral                   = "GTIDHintNeutral"
+	GTIDHintForce                     = "GTIDHintForce"
+)
+
 // InstancesByCountSlaveHosts is a sortable type for Instance
 type InstancesByCountSlaveHosts [](*Instance)
 
@@ -91,6 +99,23 @@ func ExecInstanceNoPrepare(instanceKey *InstanceKey, query string, args ...inter
 	}
 	res, err := sqlutils.ExecNoPrepare(db, query, args...)
 	return res, err
+}
+
+// EmptyCommitInstance issues an empty COMMIT on a given instance
+func EmptyCommitInstance(instanceKey *InstanceKey) error {
+	db, err := db.OpenTopology(instanceKey.Hostname, instanceKey.Port)
+	if err != nil {
+		return err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+	return err
 }
 
 // ScanInstanceRow executes a read-a-single-row query on a given MySQL topology instance
@@ -143,7 +168,14 @@ func ReadTopologyInstance(instanceKey *InstanceKey) (*Instance, error) {
 		err = sqlutils.QueryRowsMap(db, "show variables like 'maxscale%'", func(m sqlutils.RowMap) error {
 			variableName := m.GetString("Variable_name")
 			if variableName == "MAXSCALE_VERSION" {
-				instance.Version = m.GetString("value") + "-maxscale"
+				originalVersion := m.GetString("Value")
+				if originalVersion == "" {
+					originalVersion = m.GetString("value")
+				}
+				if originalVersion == "" {
+					originalVersion = "0.0.0"
+				}
+				instance.Version = originalVersion + "-maxscale"
 				instance.ServerID = 0
 				instance.Uptime = 0
 				instance.Binlog_format = "INHERIT"
@@ -157,8 +189,13 @@ func ReadTopologyInstance(instanceKey *InstanceKey) (*Instance, error) {
 			return nil
 		})
 		if err != nil {
-			// The query should not error (even if it's not maxscale)
-			goto Cleanup
+			log.Errore(err)
+			// We do not "goto Cleanup" here, although it should be the correct flow.
+			// Reason is 5.7's new security feature that requires GRANTs on performance_schema.session_variables.
+			// There is a wrong decision making in this design and the migration path to 5.7 will be difficult.
+			// I don't want orchestrator to put even more burden on this.
+			// If the statement errors, then we are unable to determine that this is maxscale, hence assume it is not.
+			// In which case there would be other queries sent to the server that are not affected by 5.7 behavior, and that will fail.
 		}
 	}
 
@@ -192,12 +229,22 @@ func ReadTopologyInstance(instanceKey *InstanceKey) (*Instance, error) {
 			resolvedHostname = instance.Key.Hostname
 		}
 
-		err = db.QueryRow("select variable_value from information_schema.global_status where variable_name='Uptime'").Scan(&instance.Uptime)
+		var placeholder string
+		// show global status works just as well with 5.6 & 5.7 (5.7 moves variables to performance_schema)
+		err = db.QueryRow("show global status like 'Uptime'").Scan(&placeholder, &instance.Uptime)
 		if err != nil {
-			goto Cleanup
+			log.Errore(err)
+			// We do not "goto Cleanup" here, although it should be the correct flow.
+			// Reason is 5.7's new security feature that requires GRANTs on performance_schema.global_variables.
+			// There is a wrong decisionmaking in this design and the migration path to 5.7 will be difficult.
+			// I don't want orchestrator to put even more burden on this. The 'Uptime' variable is not that important
+			// so as to completely fail reading a 5.7 instance.
 		}
-		// @@gtid_mode only available in Orcale MySQL >= 5.6
-		_ = db.QueryRow("select @@global.gtid_mode = 'ON'").Scan(&instance.SupportsOracleGTID)
+		if instance.IsOracleMySQL() && !instance.IsSmallerMajorVersionByString("5.6") {
+			// @@gtid_mode only available in Orcale MySQL >= 5.6
+			// Previous version just issued this query brute-force, but I don't like errors being issued where they shouldn't.
+			_ = db.QueryRow("select @@global.gtid_mode = 'ON'").Scan(&instance.SupportsOracleGTID)
+		}
 	}
 	if resolvedHostname != instance.Key.Hostname {
 		UpdateResolvedHostname(instance.Key.Hostname, resolvedHostname)
@@ -238,6 +285,7 @@ func ReadTopologyInstance(instanceKey *InstanceKey) (*Instance, error) {
 		instance.LastIOError = m.GetString("Last_IO_Error")
 		instance.SQLDelay = m.GetUintD("SQL_Delay", 0)
 		instance.UsingOracleGTID = (m.GetIntD("Auto_Position", 0) == 1)
+		instance.ExecutedGtidSet = m.GetStringD("Executed_Gtid_Set", "")
 		instance.UsingMariaDBGTID = (m.GetStringD("Using_Gtid", "No") != "No")
 		instance.HasReplicationFilters = ((m.GetStringD("Replicate_Do_DB", "") != "") || (m.GetStringD("Replicate_Ignore_DB", "") != "") || (m.GetStringD("Replicate_Do_Table", "") != "") || (m.GetStringD("Replicate_Ignore_Table", "") != "") || (m.GetStringD("Replicate_Wild_Do_Table", "") != "") || (m.GetStringD("Replicate_Wild_Ignore_Table", "") != ""))
 
@@ -511,7 +559,9 @@ func readInstanceRow(m sqlutils.RowMap) *Instance {
 	instance.Slave_SQL_Running = m.GetBool("slave_sql_running")
 	instance.Slave_IO_Running = m.GetBool("slave_io_running")
 	instance.HasReplicationFilters = m.GetBool("has_replication_filters")
+	instance.SupportsOracleGTID = m.GetBool("supports_oracle_gtid")
 	instance.UsingOracleGTID = m.GetBool("oracle_gtid")
+	instance.ExecutedGtidSet = m.GetString("executed_gtid_set")
 	instance.UsingMariaDBGTID = m.GetBool("mariadb_gtid")
 	instance.UsingPseudoGTID = m.GetBool("pseudo_gtid")
 	instance.SelfBinlogCoordinates.LogFile = m.GetString("binary_log_file")
@@ -1274,7 +1324,9 @@ func writeInstance(instance *Instance, instanceWasActuallyFound bool, lastError 
 					slave_sql_running=VALUES(slave_sql_running),
 					slave_io_running=VALUES(slave_io_running),
 					has_replication_filters=VALUES(has_replication_filters),
+					supports_oracle_gtid=VALUES(supports_oracle_gtid),
 					oracle_gtid=VALUES(oracle_gtid),
+					executed_gtid_set=VALUES(executed_gtid_set),
 					mariadb_gtid=VALUES(mariadb_gtid),
 					pseudo_gtid=values(pseudo_gtid),
 					master_log_file=VALUES(master_log_file),
@@ -1323,7 +1375,9 @@ func writeInstance(instance *Instance, instanceWasActuallyFound bool, lastError 
 				slave_sql_running,
 				slave_io_running,
 				has_replication_filters,
+				supports_oracle_gtid,
 				oracle_gtid,
+				executed_gtid_set,
 				mariadb_gtid,
 				pseudo_gtid,
 				master_log_file,
@@ -1344,7 +1398,7 @@ func writeInstance(instance *Instance, instanceWasActuallyFound bool, lastError 
 				physical_environment,
 				replication_depth,
 				is_co_master
-			) values (?, ?, NOW(), NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			) values (?, ?, NOW(), NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			%s
 			`, insertIgnore, onDuplicateKeyUpdate)
 
@@ -1366,7 +1420,9 @@ func writeInstance(instance *Instance, instanceWasActuallyFound bool, lastError 
 			instance.Slave_SQL_Running,
 			instance.Slave_IO_Running,
 			instance.HasReplicationFilters,
+			instance.SupportsOracleGTID,
 			instance.UsingOracleGTID,
+			instance.ExecutedGtidSet,
 			instance.UsingMariaDBGTID,
 			instance.UsingPseudoGTID,
 			instance.ReadBinlogCoordinates.LogFile,
@@ -1545,7 +1601,7 @@ func RefreshTopologyInstances(instances [](*Instance)) {
 			})
 		}()
 	}
-	for _ = range instances {
+	for range instances {
 		<-barrier
 	}
 }
@@ -1570,7 +1626,7 @@ func FlushBinaryLogs(instanceKey *InstanceKey, count int) error {
 		}
 	}
 
-	log.Infof("flush-binary-logs on %+v", *instanceKey)
+	log.Infof("flush-binary-logs count=%+v on %+v", count, *instanceKey)
 	AuditOperation("flush-binary-logs", instanceKey, "success")
 
 	return nil
@@ -1578,7 +1634,6 @@ func FlushBinaryLogs(instanceKey *InstanceKey, count int) error {
 
 // FlushBinaryLogsTo attempts to 'FLUSH BINARY LOGS' until given binary log is reached
 func FlushBinaryLogsTo(instanceKey *InstanceKey, logFile string) (*Instance, error) {
-
 	instance, err := ReadTopologyInstance(instanceKey)
 	if err != nil {
 		return instance, log.Errore(err)
@@ -1589,14 +1644,7 @@ func FlushBinaryLogsTo(instanceKey *InstanceKey, logFile string) (*Instance, err
 		return nil, log.Errorf("FlushBinaryLogsTo: target log file %+v is smaller than current log file %+v", logFile, instance.SelfBinlogCoordinates.LogFile)
 	}
 	err = FlushBinaryLogs(instanceKey, distance)
-	if err != nil {
-		return instance, err
-	}
-
-	log.Infof("flush-binary-logs-to %+v on %+v", logFile, *instanceKey)
-	AuditOperation("flush-binary-logs-to", instanceKey, "success")
-
-	return instance, nil
+	return instance, err
 }
 
 // StopSlaveNicely stops a slave such that SQL_thread and IO_thread are aligned (i.e.
@@ -1666,7 +1714,7 @@ func StopSlavesNicely(slaves [](*Instance), timeout time.Duration) [](*Instance)
 			})
 		}()
 	}
-	for _ = range slaves {
+	for range slaves {
 		refreshedSlaves = append(refreshedSlaves, <-barrier)
 	}
 	return refreshedSlaves
@@ -1716,6 +1764,20 @@ func StartSlave(instanceKey *InstanceKey) (*Instance, error) {
 	return instance, err
 }
 
+// RestartSlave stops & starts replication on a given instance
+func RestartSlave(instanceKey *InstanceKey) (instance *Instance, err error) {
+	instance, err = StopSlave(instanceKey)
+	if err != nil {
+		return instance, log.Errore(err)
+	}
+	instance, err = StartSlave(instanceKey)
+	if err != nil {
+		return instance, log.Errore(err)
+	}
+	return instance, nil
+
+}
+
 // StartSlaves will do concurrent start-slave
 func StartSlaves(slaves [](*Instance)) {
 	// use concurrency but wait for all to complete
@@ -1730,7 +1792,7 @@ func StartSlaves(slaves [](*Instance)) {
 			ExecuteOnTopology(func() { StartSlave(&instance.Key) })
 		}()
 	}
-	for _ = range slaves {
+	for range slaves {
 		<-barrier
 	}
 }
@@ -1785,7 +1847,7 @@ func StartSlaveUntilMasterCoordinates(instanceKey *InstanceKey, masterCoordinate
 }
 
 // ChangeMasterTo changes the given instance's master according to given input.
-func ChangeMasterTo(instanceKey *InstanceKey, masterKey *InstanceKey, masterBinlogCoordinates *BinlogCoordinates, skipUnresolve bool) (*Instance, error) {
+func ChangeMasterTo(instanceKey *InstanceKey, masterKey *InstanceKey, masterBinlogCoordinates *BinlogCoordinates, skipUnresolve bool, gtidHint OperationGTIDHint) (*Instance, error) {
 	instance, err := ReadTopologyInstance(instanceKey)
 	if err != nil {
 		return instance, log.Errore(err)
@@ -1812,23 +1874,52 @@ func ChangeMasterTo(instanceKey *InstanceKey, masterKey *InstanceKey, masterBinl
 		return instance, fmt.Errorf("noop: aborting CHANGE MASTER TO operation on %+v; signalling error but nothing went wrong.", *instanceKey)
 	}
 
-	if instance.UsingMariaDBGTID {
+	originalMasterKey := instance.MasterKey
+	originalExecBinlogCoordinates := instance.ExecBinlogCoordinates
+
+	changedViaGTID := false
+	if instance.UsingMariaDBGTID && gtidHint != GTIDHintDeny {
 		// MariaDB has a bug: a CHANGE MASTER TO statement does not work properly with prepared statement... :P
 		// See https://mariadb.atlassian.net/browse/MDEV-7640
 		// This is the reason for ExecInstanceNoPrepare
+		// Keep on using GTID
 		_, err = ExecInstanceNoPrepare(instanceKey, fmt.Sprintf("change master to master_host='%s', master_port=%d",
 			changeToMasterKey.Hostname, changeToMasterKey.Port))
-	} else if instance.UsingOracleGTID {
+		changedViaGTID = true
+	} else if instance.UsingMariaDBGTID && gtidHint == GTIDHintDeny {
+		// Make sure to not use GTID
+		_, err = ExecInstanceNoPrepare(instanceKey, fmt.Sprintf("change master to master_host='%s', master_port=%d, master_log_file='%s', master_log_pos=%d, master_use_gtid=no",
+			changeToMasterKey.Hostname, changeToMasterKey.Port, masterBinlogCoordinates.LogFile, masterBinlogCoordinates.LogPos))
+	} else if instance.IsMariaDB() && gtidHint == GTIDHintForce {
+		// Is MariaDB; not using GTID, turn into GTID
+		_, err = ExecInstanceNoPrepare(instanceKey, fmt.Sprintf("change master to master_host='%s', master_port=%d, master_use_gtid=slave_pos",
+			changeToMasterKey.Hostname, changeToMasterKey.Port))
+		changedViaGTID = true
+	} else if instance.UsingOracleGTID && gtidHint != GTIDHintDeny {
+		// Is Oracle; already uses GTID; keep using it.
+		_, err = ExecInstanceNoPrepare(instanceKey, fmt.Sprintf("change master to master_host='%s', master_port=%d",
+			changeToMasterKey.Hostname, changeToMasterKey.Port))
+		changedViaGTID = true
+	} else if instance.UsingOracleGTID && gtidHint == GTIDHintDeny {
+		// Is Oracle; already uses GTID
+		_, err = ExecInstanceNoPrepare(instanceKey, fmt.Sprintf("change master to master_host='%s', master_port=%d, master_log_file='%s', master_log_pos=%d, master_auto_position=0",
+			changeToMasterKey.Hostname, changeToMasterKey.Port, masterBinlogCoordinates.LogFile, masterBinlogCoordinates.LogPos))
+	} else if instance.SupportsOracleGTID && gtidHint == GTIDHintForce {
+		// Is Oracle; not using GTID right now; turn into GTID
 		_, err = ExecInstanceNoPrepare(instanceKey, fmt.Sprintf("change master to master_host='%s', master_port=%d, master_auto_position=1",
 			changeToMasterKey.Hostname, changeToMasterKey.Port))
+		changedViaGTID = true
 	} else {
+		// Normal binlog file:pos
 		_, err = ExecInstanceNoPrepare(instanceKey, fmt.Sprintf("change master to master_host='%s', master_port=%d, master_log_file='%s', master_log_pos=%d",
 			changeToMasterKey.Hostname, changeToMasterKey.Port, masterBinlogCoordinates.LogFile, masterBinlogCoordinates.LogPos))
 	}
 	if err != nil {
 		return instance, log.Errore(err)
 	}
-	log.Infof("ChangeMasterTo: Changed master on %+v to: %+v, %+v", *instanceKey, changeToMasterKey, masterBinlogCoordinates)
+	WriteMasterPositionEquivalence(&originalMasterKey, &originalExecBinlogCoordinates, changeToMasterKey, masterBinlogCoordinates)
+
+	log.Infof("ChangeMasterTo: Changed master on %+v to: %+v, %+v. GTID: %+v", *instanceKey, masterKey, masterBinlogCoordinates, changedViaGTID)
 
 	instance, err = ReadTopologyInstance(instanceKey)
 	return instance, err
@@ -1867,6 +1958,33 @@ func ResetSlave(instanceKey *InstanceKey) (*Instance, error) {
 	return instance, err
 }
 
+// skipQueryClassic skips a query in normal binlog file:pos replication
+func skipQueryClassic(instance *Instance) error {
+	_, err := ExecInstance(&instance.Key, `set global sql_slave_skip_counter := 1`)
+	return err
+}
+
+// skipQueryOracleGtid skips a single query in an Oracle GTID replicating slave, by injecting an empty transaction
+func skipQueryOracleGtid(instance *Instance) error {
+	nextGtid, err := instance.NextGTID()
+	if err != nil {
+		return err
+	}
+	if nextGtid == "" {
+		return fmt.Errorf("Empty NextGTID() in skipQueryGtid() for %+v", instance.Key)
+	}
+	if _, err := ExecInstanceNoPrepare(&instance.Key, fmt.Sprintf(`SET GTID_NEXT='%s'`, nextGtid)); err != nil {
+		return err
+	}
+	if err := EmptyCommitInstance(&instance.Key); err != nil {
+		return err
+	}
+	if _, err := ExecInstanceNoPrepare(&instance.Key, `SET GTID_NEXT='AUTOMATIC'`); err != nil {
+		return err
+	}
+	return nil
+}
+
 // SkipQuery skip a single query in a failed replication instance
 func SkipQuery(instanceKey *InstanceKey) (*Instance, error) {
 	instance, err := ReadTopologyInstance(instanceKey)
@@ -1878,7 +1996,7 @@ func SkipQuery(instanceKey *InstanceKey) (*Instance, error) {
 		return instance, fmt.Errorf("instance is not a slave: %+v", instanceKey)
 	}
 	if instance.Slave_SQL_Running {
-		return instance, fmt.Errorf("Slave_SQL_is running on %+v", instanceKey)
+		return instance, fmt.Errorf("Slave SQL thread is running on %+v", instanceKey)
 	}
 	if instance.LastSQLError == "" {
 		return instance, fmt.Errorf("No SQL error on %+v", instanceKey)
@@ -1889,10 +2007,17 @@ func SkipQuery(instanceKey *InstanceKey) (*Instance, error) {
 	}
 
 	log.Debugf("Skipping one query on %+v", instanceKey)
-	_, err = ExecInstance(instanceKey, `set global sql_slave_skip_counter := 1`)
+	if instance.UsingOracleGTID {
+		err = skipQueryOracleGtid(instance)
+	} else if instance.UsingMariaDBGTID {
+		return instance, log.Errorf("%+v is replicating with MariaDB GTID. To skip a query first disable GTID, then skip, then enable GTID again", *instanceKey)
+	} else {
+		err = skipQueryClassic(instance)
+	}
 	if err != nil {
 		return instance, log.Errore(err)
 	}
+	AuditOperation("skip-query", instanceKey, "Skipped one query")
 	return StartSlave(instanceKey)
 }
 

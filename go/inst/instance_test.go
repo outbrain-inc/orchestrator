@@ -70,6 +70,20 @@ func (s *TestSuite) TestIsSmallerMajorVersion(c *C) {
 	c.Assert(i55.IsSmallerMajorVersion(&i56), Equals, true)
 }
 
+func (s *TestSuite) TestIsVersion(c *C) {
+	i51 := inst.Instance{Version: "5.1.19"}
+	i55 := inst.Instance{Version: "5.5.17-debug"}
+	i56 := inst.Instance{Version: "5.6.20"}
+	i57 := inst.Instance{Version: "5.7.8-log"}
+
+	c.Assert(i51.IsMySQL51(), Equals, true)
+	c.Assert(i55.IsMySQL55(), Equals, true)
+	c.Assert(i56.IsMySQL56(), Equals, true)
+	c.Assert(i55.IsMySQL56(), Equals, false)
+	c.Assert(i57.IsMySQL57(), Equals, true)
+	c.Assert(i56.IsMySQL57(), Equals, false)
+}
+
 func (s *TestSuite) TestBinlogCoordinates(c *C) {
 	c1 := inst.BinlogCoordinates{LogFile: "mysql-bin.00017", LogPos: 104}
 	c2 := inst.BinlogCoordinates{LogFile: "mysql-bin.00017", LogPos: 104}
@@ -199,4 +213,25 @@ func (s *TestSuite) TestParseInstanceKey(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(i.Hostname, Equals, "127.0.0.1")
 	c.Assert(i.Port, Equals, 3306)
+}
+
+func (s *TestSuite) TestNextGTID(c *C) {
+	{
+		i := inst.Instance{ExecutedGtidSet: "4f6d62ed-df65-11e3-b395-60672090eb04:1,b9b4712a-df64-11e3-b391-60672090eb04:1-6"}
+		nextGTID, err := i.NextGTID()
+		c.Assert(err, IsNil)
+		c.Assert(nextGTID, Equals, "b9b4712a-df64-11e3-b391-60672090eb04:7")
+	}
+	{
+		i := inst.Instance{ExecutedGtidSet: "b9b4712a-df64-11e3-b391-60672090eb04:1-6"}
+		nextGTID, err := i.NextGTID()
+		c.Assert(err, IsNil)
+		c.Assert(nextGTID, Equals, "b9b4712a-df64-11e3-b391-60672090eb04:7")
+	}
+	{
+		i := inst.Instance{ExecutedGtidSet: "b9b4712a-df64-11e3-b391-60672090eb04:6"}
+		nextGTID, err := i.NextGTID()
+		c.Assert(err, IsNil)
+		c.Assert(nextGTID, Equals, "b9b4712a-df64-11e3-b391-60672090eb04:7")
+	}
 }

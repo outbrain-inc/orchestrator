@@ -85,9 +85,19 @@ type Configuration struct {
 	PromotionIgnoreHostnameFilters             []string          // Orchestrator will not promote slaves with hostname matching pattern (via -c recovery; for example, avoid promoting dev-dedicated machines)
 	ServeAgentsHttp                            bool              // Spawn another HTTP interface dedicated for orcehstrator-agent
 	AgentsUseSSL                               bool              // When "true" orchestrator will listen on agents port with SSL as well as connect to agents via SSL
+	AgentsUseMutualTLS                         bool              // When "true" Use mutual TLS for the server to agent communication
+	AgentSSLSkipVerify                         bool              // When using SSL for the Agent, should we ignore SSL certification error
+	AgentSSLPrivateKeyFile                     string            // Name of Agent SSL private key file, applies only when AgentsUseSSL = true
+	AgentSSLCertFile                           string            // Name of Agent SSL certification file, applies only when AgentsUseSSL = true
+	AgentSSLCAFile                             string            // Name of the Agent Certificate Authority file, applies only when AgentsUseSSL = true
+	AgentSSLValidOUs                           []string          // Valid organizational units when using mutual TLS to communicate with the agents
+	UseSSL                                     bool              // Use SSL on the server web port
+	UseMutualTLS                               bool              // When "true" Use mutual TLS for the server's web and API connections
 	SSLSkipVerify                              bool              // When using SSL, should we ignore SSL certification error
-	SSLPrivateKeyFile                          string            // Name of SSL private key file, applies only when AgentsUseSSL = true
-	SSLCertFile                                string            // Name of SSL certification file, applies only when AgentsUseSSL = true
+	SSLPrivateKeyFile                          string            // Name of SSL private key file, applies only when UseSSL = true
+	SSLCertFile                                string            // Name of SSL certification file, applies only when UseSSL = true
+	SSLCAFile                                  string            // Name of the Certificate Authority file, applies only when UseSSL = true
+	SSLValidOUs                                []string          // Valid organizational units when using mutual TLS
 	HttpTimeoutSeconds                         int               // Number of idle seconds before HTTP GET request times out (when accessing orchestrator-agent)
 	AgentPollMinutes                           uint              // Minutes between agent polling
 	UnseenAgentForgetHours                     uint              // Number of hours after which an unseen agent is forgotten
@@ -103,12 +113,15 @@ type Configuration struct {
 	RecoveryIgnoreHostnameFilters              []string          // Recovery analysis will completely ignore hosts matching given patterns
 	RecoverMasterClusterFilters                []string          // Only do master recovery on clusters matching these regexp patterns (of course the ".*" pattern matches everything)
 	RecoverIntermediateMasterClusterFilters    []string          // Only do IM recovery on clusters matching these regexp patterns (of course the ".*" pattern matches everything)
-	OnFailureDetectionProcesses                []string          // Processes to execute when detecting a failover scenario (before making a decision whether to failover or not). May and should use some of these placeholders: {failureType}, {failureDescription}, {failedHost}, {failureCluster}, {failureClusterAlias}, {failedPort}, {successorHost}, {successorPort}, {countSlaves}, {slaveHosts}
+	OnFailureDetectionProcesses                []string          // Processes to execute when detecting a failover scenario (before making a decision whether to failover or not). May and should use some of these placeholders: {failureType}, {failureDescription}, {failedHost}, {failureCluster}, {failureClusterAlias}, {failedPort}, {successorHost}, {successorPort}, {countSlaves}, {slaveHosts}, {autoMasterRecovery}, {autoIntermediateMasterRecovery}
 	PreFailoverProcesses                       []string          // Processes to execute before doing a failover (aborting operation should any once of them exits with non-zero code; order of execution undefined). May and should use some of these placeholders: {failureType}, {failureDescription}, {failedHost}, {failureCluster}, {failureClusterAlias}, {failedPort}, {successorHost}, {successorPort}, {countSlaves}, {slaveHosts}
 	PostFailoverProcesses                      []string          // Processes to execute after doing a failover (order of execution undefined). May and should use some of these placeholders: {failureType}, {failureDescription}, {failedHost}, {failureCluster}, {failureClusterAlias}, {failedPort}, {successorHost}, {successorPort}, {countSlaves}, {slaveHosts}
 	PostMasterFailoverProcesses                []string          // Processes to execute after doing a master failover (order of execution undefined). Uses same placeholders as PostFailoverProcesses
 	PostIntermediateMasterFailoverProcesses    []string          // Processes to execute after doing a master failover (order of execution undefined). Uses same placeholders as PostFailoverProcesses
 	OSCIgnoreHostnameFilters                   []string          // OSC slaves recommendation will ignore slave hostnames matching given patterns
+	GraphiteAddr                               string            // Optional; address of graphite port. If supplied, metrics will be written here
+	GraphitePath                               string            // Prefix for graphite path. May include {hostname} magic placeholder
+	GraphiteConvertHostnameDotsToUnderscores   bool              // If true, then hostname's dots are converted to underscores before being used in graphite path
 }
 
 var Config *Configuration = NewConfiguration()
@@ -163,9 +176,19 @@ func NewConfiguration() *Configuration {
 		PromotionIgnoreHostnameFilters:             []string{},
 		ServeAgentsHttp:                            false,
 		AgentsUseSSL:                               false,
+		AgentsUseMutualTLS:                         false,
+		AgentSSLValidOUs:                           []string{},
+		AgentSSLSkipVerify:                         false,
+		AgentSSLPrivateKeyFile:                     "",
+		AgentSSLCertFile:                           "",
+		AgentSSLCAFile:                             "",
+		UseSSL:                                     false,
+		UseMutualTLS:                               false,
+		SSLValidOUs:                                []string{},
 		SSLSkipVerify:                              false,
 		SSLPrivateKeyFile:                          "",
 		SSLCertFile:                                "",
+		SSLCAFile:                                  "",
 		HttpTimeoutSeconds:                         60,
 		AgentPollMinutes:                           60,
 		UnseenAgentForgetHours:                     6,
@@ -187,6 +210,9 @@ func NewConfiguration() *Configuration {
 		PostIntermediateMasterFailoverProcesses:    []string{},
 		PostFailoverProcesses:                      []string{},
 		OSCIgnoreHostnameFilters:                   []string{},
+		GraphiteAddr:                               "",
+		GraphitePath:                               "",
+		GraphiteConvertHostnameDotsToUnderscores:   true,
 	}
 }
 
@@ -229,7 +255,7 @@ func read(file_name string) (*Configuration, error) {
 			if err != nil {
 				log.Fatalf("Failed to parse gcfg data from file: %+v", err)
 			} else {
-				log.Debugf("Parsed topology credentials from %s", Config.MySQLOrchestratorCredentialsConfigFile)
+				log.Debugf("Parsed topology credentials from %s", Config.MySQLTopologyCredentialsConfigFile)
 				Config.MySQLTopologyUser = mySQLConfig.Client.User
 				Config.MySQLTopologyPassword = mySQLConfig.Client.Password
 			}

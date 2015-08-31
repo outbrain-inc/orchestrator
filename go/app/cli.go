@@ -78,7 +78,7 @@ func getClusterName(clusterAlias string, instanceKey *inst.InstanceKey) (cluster
 }
 
 // Cli initiates a command line interface, executing requested command.
-func Cli(command string, strict bool, instance string, sibling string, owner string, reason string, duration string, pattern string, clusterAlias string, pool string, hostnameFlag string) {
+func Cli(command string, strict bool, instance string, destination string, owner string, reason string, duration string, pattern string, clusterAlias string, pool string, hostnameFlag string) {
 
 	if instance != "" && !strings.Contains(instance, ":") {
 		instance = fmt.Sprintf("%s:%d", instance, config.Config.DefaultInstancePort)
@@ -92,12 +92,12 @@ func Cli(command string, strict bool, instance string, sibling string, owner str
 		rawInstanceKey = nil
 	}
 
-	if sibling != "" && !strings.Contains(sibling, ":") {
-		sibling = fmt.Sprintf("%s:%d", sibling, config.Config.DefaultInstancePort)
+	if destination != "" && !strings.Contains(destination, ":") {
+		destination = fmt.Sprintf("%s:%d", destination, config.Config.DefaultInstancePort)
 	}
-	siblingKey, err := inst.ParseInstanceKey(sibling)
+	destinationKey, err := inst.ParseInstanceKey(destination)
 	if err != nil {
-		siblingKey = nil
+		destinationKey = nil
 	}
 
 	if hostname, err := os.Hostname(); err == nil {
@@ -114,408 +114,9 @@ func Cli(command string, strict bool, instance string, sibling string, owner str
 	}
 	inst.SetMaintenanceOwner(owner)
 
+	// begin commands
 	switch command {
-	case cliCommand("skip-query"):
-		{
-			if instanceKey == nil {
-				instanceKey = thisInstanceKey
-			}
-			if instanceKey == nil {
-				log.Fatal("Cannot deduce instance:", instance)
-			}
-			_, err := inst.SkipQuery(instanceKey)
-			if err != nil {
-				log.Fatale(err)
-			}
-			fmt.Println(instanceKey.DisplayString())
-		}
-	case cliCommand("move-up"):
-		{
-			if instanceKey == nil {
-				instanceKey = thisInstanceKey
-			}
-			if instanceKey == nil {
-				log.Fatal("Cannot deduce instance:", instance)
-			}
-			instance, err := inst.MoveUp(instanceKey)
-			if err != nil {
-				log.Fatale(err)
-			}
-			fmt.Println(fmt.Sprintf("%s<%s", instanceKey.DisplayString(), instance.MasterKey.DisplayString()))
-		}
-	case cliCommand("move-up-slaves"):
-		{
-			if instanceKey == nil {
-				log.Fatal("Cannot deduce instance:", instance)
-			}
-
-			movedSlaves, _, err, errs := inst.MoveUpSlaves(instanceKey, pattern)
-			if err != nil {
-				log.Fatale(err)
-			} else {
-				for _, e := range errs {
-					log.Errore(e)
-				}
-				for _, slave := range movedSlaves {
-					fmt.Println(slave.Key.DisplayString())
-				}
-			}
-		}
-	case cliCommand("move-below"):
-		{
-			if instanceKey == nil {
-				instanceKey = thisInstanceKey
-			}
-			if instanceKey == nil {
-				log.Fatal("Cannot deduce instance:", instance)
-			}
-			if siblingKey == nil {
-				log.Fatal("Cannot deduce sibling:", sibling)
-			}
-			_, err := inst.MoveBelow(instanceKey, siblingKey)
-			if err != nil {
-				log.Fatale(err)
-			}
-			fmt.Println(fmt.Sprintf("%s<%s", instanceKey.DisplayString(), siblingKey.DisplayString()))
-		}
-	case cliCommand("repoint"):
-		{
-			if instanceKey == nil {
-				instanceKey = thisInstanceKey
-			}
-			if instanceKey == nil {
-				log.Fatal("Cannot deduce instance:", instance)
-			}
-			// siblingKey can be null, in which case the instance repoints to its existing master
-			instance, err := inst.Repoint(instanceKey, siblingKey)
-			if err != nil {
-				log.Fatale(err)
-			}
-			fmt.Println(fmt.Sprintf("%s<%s", instanceKey.DisplayString(), instance.MasterKey.DisplayString()))
-		}
-	case cliCommand("repoint-slaves"):
-		{
-			if instanceKey == nil {
-				instanceKey = thisInstanceKey
-			}
-			if instanceKey == nil {
-				log.Fatal("Cannot deduce instance:", instance)
-			}
-			repointedSlaves, err, errs := inst.RepointSlavesTo(instanceKey, pattern, siblingKey)
-			if err != nil {
-				log.Fatale(err)
-			} else {
-				for _, e := range errs {
-					log.Errore(e)
-				}
-				for _, slave := range repointedSlaves {
-					fmt.Println(fmt.Sprintf("%s<%s", slave.Key.DisplayString(), instanceKey.DisplayString()))
-				}
-			}
-		}
-	case cliCommand("enslave-siblings"):
-		{
-			if instanceKey == nil {
-				log.Fatal("Cannot deduce instance:", instance)
-			}
-			_, _, err := inst.EnslaveSiblings(instanceKey)
-			if err != nil {
-				log.Fatale(err)
-			}
-			fmt.Println(instanceKey.DisplayString())
-		}
-	case cliCommand("enslave-master"):
-		{
-			if instanceKey == nil {
-				log.Fatal("Cannot deduce instance:", instance)
-			}
-			_, err := inst.EnslaveMaster(instanceKey)
-			if err != nil {
-				log.Fatale(err)
-			}
-			fmt.Println(instanceKey.DisplayString())
-		}
-	case cliCommand("make-co-master"):
-		{
-			if instanceKey == nil {
-				instanceKey = thisInstanceKey
-			}
-			if instanceKey == nil {
-				log.Fatal("Cannot deduce instance:", instance)
-			}
-			_, err := inst.MakeCoMaster(instanceKey)
-			if err != nil {
-				log.Fatale(err)
-			}
-			fmt.Println(instanceKey.DisplayString())
-		}
-	case cliCommand("match-below"):
-		{
-			if instanceKey == nil {
-				instanceKey = thisInstanceKey
-			}
-			if instanceKey == nil {
-				log.Fatal("Cannot deduce instance:", instance)
-			}
-			if siblingKey == nil {
-				log.Fatal("Cannot deduce sibling:", sibling)
-			}
-			_, _, err := inst.MatchBelow(instanceKey, siblingKey, true, true)
-			if err != nil {
-				log.Fatale(err)
-			}
-			fmt.Println(fmt.Sprintf("%s<%s", instanceKey.DisplayString(), siblingKey.DisplayString()))
-		}
-	case cliCommand("match-up"):
-		{
-			if instanceKey == nil {
-				instanceKey = thisInstanceKey
-			}
-			if instanceKey == nil {
-				log.Fatal("Cannot deduce instance:", instance)
-			}
-			instance, _, err := inst.MatchUp(instanceKey, true, true)
-			if err != nil {
-				log.Fatale(err)
-			}
-			fmt.Println(fmt.Sprintf("%s<%s", instanceKey.DisplayString(), instance.MasterKey.DisplayString()))
-		}
-	case cliCommand("rematch"):
-		{
-			if instanceKey == nil {
-				instanceKey = thisInstanceKey
-			}
-			if instanceKey == nil {
-				log.Fatal("Cannot deduce instance:", instance)
-			}
-			instance, _, err := inst.RematchSlave(instanceKey, true, true)
-			if err != nil {
-				log.Fatale(err)
-			}
-			fmt.Println(fmt.Sprintf("%s<%s", instanceKey.DisplayString(), instance.MasterKey.DisplayString()))
-		}
-	case cliCommand("get-candidate-slave"):
-		{
-			if instanceKey == nil {
-				log.Fatal("Cannot deduce instance:", instance)
-			}
-
-			instance, _, _, _, err := inst.GetCandidateSlave(instanceKey, false)
-			if err != nil {
-				log.Fatale(err)
-			} else {
-				fmt.Println(instance.Key.DisplayString())
-			}
-		}
-	case cliCommand("multi-match-slaves"):
-		{
-			// Move all slaves of "instance" beneath "sibling"
-			if instanceKey == nil {
-				log.Fatal("Cannot deduce instance:", instance)
-			}
-			if siblingKey == nil {
-				log.Fatal("Cannot deduce sibling:", sibling)
-			}
-
-			matchedSlaves, _, err, errs := inst.MultiMatchSlaves(instanceKey, siblingKey, pattern)
-			if err != nil {
-				log.Fatale(err)
-			} else {
-				for _, e := range errs {
-					log.Errore(e)
-				}
-				for _, slave := range matchedSlaves {
-					fmt.Println(slave.Key.DisplayString())
-				}
-			}
-		}
-	case cliCommand("match-up-slaves"):
-		{
-			if instanceKey == nil {
-				log.Fatal("Cannot deduce instance:", instance)
-			}
-
-			matchedSlaves, _, err, errs := inst.MatchUpSlaves(instanceKey, pattern)
-			if err != nil {
-				log.Fatale(err)
-			} else {
-				for _, e := range errs {
-					log.Errore(e)
-				}
-				for _, slave := range matchedSlaves {
-					fmt.Println(slave.Key.DisplayString())
-				}
-			}
-		}
-	case cliCommand("regroup-slaves"):
-		{
-			if instanceKey == nil {
-				log.Fatal("Cannot deduce instance:", instance)
-			}
-
-			lostSlaves, equalSlaves, aheadSlaves, promotedSlave, err := inst.RegroupSlaves(instanceKey, false, func(candidateSlave *inst.Instance) { fmt.Println(candidateSlave.Key.DisplayString()) })
-			if promotedSlave == nil {
-				log.Fatalf("Could not regroup slaves of %+v; error: %+v", *instanceKey, err)
-			}
-			fmt.Println(fmt.Sprintf("%s lost: %d, trivial: %d, pseudo-gtid: %d",
-				promotedSlave.Key.DisplayString(), len(lostSlaves), len(equalSlaves), len(aheadSlaves)))
-			if err != nil {
-				log.Fatale(err)
-			}
-		}
-	case cliCommand("recover"), cliCommand("recover-lite"):
-		{
-			if instanceKey == nil {
-				log.Fatal("Cannot deduce instance:", instance)
-			}
-
-			actionTaken, promotedInstance, err := logic.CheckAndRecover(instanceKey, siblingKey, true, (command == "recover-lite"))
-			if err != nil {
-				log.Fatale(err)
-			}
-			if actionTaken {
-				fmt.Println(promotedInstance.Key.DisplayString())
-			}
-		}
-	case cliCommand("last-pseudo-gtid"):
-		{
-			if instanceKey == nil {
-				instanceKey = thisInstanceKey
-			}
-			if instanceKey == nil {
-				log.Fatalf("Unresolved instance")
-			}
-			instance, err := inst.ReadTopologyInstance(instanceKey)
-			if err != nil {
-				log.Fatale(err)
-			}
-			if instance == nil {
-				log.Fatalf("Instance not found: %+v", *instanceKey)
-			}
-			coordinates, text, err := inst.FindLastPseudoGTIDEntry(instance, instance.RelaylogCoordinates, strict, nil)
-			if err != nil {
-				log.Fatale(err)
-			}
-			fmt.Println(fmt.Sprintf("%+v:%s", *coordinates, text))
-		}
-
-	case cliCommand("stop-slave"):
-		{
-			if instanceKey == nil {
-				instanceKey = thisInstanceKey
-			}
-			if instanceKey == nil {
-				log.Fatal("Cannot deduce instance:", instance)
-			}
-			_, err := inst.StopSlave(instanceKey)
-			if err != nil {
-				log.Fatale(err)
-			}
-			fmt.Println(instanceKey.DisplayString())
-		}
-	case cliCommand("start-slave"):
-		{
-			if instanceKey == nil {
-				instanceKey = thisInstanceKey
-			}
-			if instanceKey == nil {
-				log.Fatal("Cannot deduce instance:", instance)
-			}
-			_, err := inst.StartSlave(instanceKey)
-			if err != nil {
-				log.Fatale(err)
-			}
-			fmt.Println(instanceKey.DisplayString())
-		}
-	case cliCommand("reset-slave"):
-		{
-			if instanceKey == nil {
-				instanceKey = thisInstanceKey
-			}
-			if instanceKey == nil {
-				log.Fatal("Cannot deduce instance:", instance)
-			}
-			_, err := inst.ResetSlaveOperation(instanceKey)
-			if err != nil {
-				log.Fatale(err)
-			}
-			fmt.Println(instanceKey.DisplayString())
-		}
-	case cliCommand("detach-slave"):
-		{
-			if instanceKey == nil {
-				instanceKey = thisInstanceKey
-			}
-			if instanceKey == nil {
-				log.Fatal("Cannot deduce instance:", instance)
-			}
-			_, err := inst.DetachSlaveOperation(instanceKey)
-			if err != nil {
-				log.Fatale(err)
-			}
-			fmt.Println(instanceKey.DisplayString())
-		}
-	case cliCommand("reattach-slave"):
-		{
-			if instanceKey == nil {
-				instanceKey = thisInstanceKey
-			}
-			if instanceKey == nil {
-				log.Fatal("Cannot deduce instance:", instance)
-			}
-			_, err := inst.ReattachSlaveOperation(instanceKey)
-			if err != nil {
-				log.Fatale(err)
-			}
-			fmt.Println(instanceKey.DisplayString())
-		}
-	case cliCommand("set-read-only"):
-		{
-			if instanceKey == nil {
-				instanceKey = thisInstanceKey
-			}
-			if instanceKey == nil {
-				log.Fatal("Cannot deduce instance:", instance)
-			}
-			_, err := inst.SetReadOnly(instanceKey, true)
-			if err != nil {
-				log.Fatale(err)
-			}
-			fmt.Println(instanceKey.DisplayString())
-		}
-	case cliCommand("set-writeable"):
-		{
-			if instanceKey == nil {
-				instanceKey = thisInstanceKey
-			}
-			if instanceKey == nil {
-				log.Fatal("Cannot deduce instance:", instance)
-			}
-			_, err := inst.SetReadOnly(instanceKey, false)
-			if err != nil {
-				log.Fatale(err)
-			}
-			fmt.Println(instanceKey.DisplayString())
-		}
-	case cliCommand("flush-binary-logs"):
-		{
-			if instanceKey == nil {
-				instanceKey = thisInstanceKey
-			}
-			if instanceKey == nil {
-				log.Fatal("Cannot deduce instance:", instance)
-			}
-			var err error
-			if *config.RuntimeCLIFlags.BinlogFile == "" {
-				err = inst.FlushBinaryLogs(instanceKey, 1)
-			} else {
-				_, err = inst.FlushBinaryLogsTo(instanceKey, *config.RuntimeCLIFlags.BinlogFile)
-			}
-			if err != nil {
-				log.Fatale(err)
-			}
-			fmt.Println(instanceKey.DisplayString())
-		}
+	// Instance meta
 	case cliCommand("discover"):
 		{
 			if instanceKey == nil {
@@ -544,6 +145,61 @@ func Cli(command string, strict bool, instance string, sibling string, owner str
 			}
 			fmt.Println(rawInstanceKey.DisplayString())
 		}
+	case cliCommand("resolve"):
+		{
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			if conn, err := net.Dial("tcp", instanceKey.DisplayString()); err == nil {
+				conn.Close()
+			} else {
+				log.Fatale(err)
+			}
+			fmt.Println(instanceKey.DisplayString())
+		}
+	case cliCommand("register-hostname-unresolve"):
+		{
+			if instanceKey == nil {
+				instanceKey = thisInstanceKey
+			}
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			err := inst.RegisterHostnameUnresolve(instanceKey, hostnameFlag)
+			if err != nil {
+				log.Fatale(err)
+			}
+			fmt.Println(instanceKey.DisplayString())
+		}
+	case cliCommand("deregister-hostname-unresolve"):
+		{
+			if instanceKey == nil {
+				instanceKey = thisInstanceKey
+			}
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			err := inst.DeregisterHostnameUnresolve(instanceKey)
+			if err != nil {
+				log.Fatale(err)
+			}
+			fmt.Println(instanceKey.DisplayString())
+		}
+	case cliCommand("register-candidate"):
+		{
+			if instanceKey == nil {
+				instanceKey = thisInstanceKey
+			}
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			err := inst.RegisterCandidateInstance(instanceKey)
+			if err != nil {
+				log.Fatale(err)
+			}
+			fmt.Println(instanceKey.DisplayString())
+		}
+		// Instance
 	case cliCommand("begin-maintenance"):
 		{
 			if instanceKey == nil {
@@ -632,7 +288,7 @@ func Cli(command string, strict bool, instance string, sibling string, owner str
 			}
 			fmt.Println(instanceKey.DisplayString())
 		}
-	case cliCommand("register-candidate"):
+	case cliCommand("set-read-only"):
 		{
 			if instanceKey == nil {
 				instanceKey = thisInstanceKey
@@ -640,13 +296,13 @@ func Cli(command string, strict bool, instance string, sibling string, owner str
 			if instanceKey == nil {
 				log.Fatal("Cannot deduce instance:", instance)
 			}
-			err := inst.RegisterCandidateInstance(instanceKey)
+			_, err := inst.SetReadOnly(instanceKey, true)
 			if err != nil {
 				log.Fatale(err)
 			}
 			fmt.Println(instanceKey.DisplayString())
 		}
-	case cliCommand("register-hostname-unresolve"):
+	case cliCommand("set-writeable"):
 		{
 			if instanceKey == nil {
 				instanceKey = thisInstanceKey
@@ -654,13 +310,13 @@ func Cli(command string, strict bool, instance string, sibling string, owner str
 			if instanceKey == nil {
 				log.Fatal("Cannot deduce instance:", instance)
 			}
-			err := inst.RegisterHostnameUnresolve(instanceKey, hostnameFlag)
+			_, err := inst.SetReadOnly(instanceKey, false)
 			if err != nil {
 				log.Fatale(err)
 			}
 			fmt.Println(instanceKey.DisplayString())
 		}
-	case cliCommand("deregister-hostname-unresolve"):
+	case cliCommand("flush-binary-logs"):
 		{
 			if instanceKey == nil {
 				instanceKey = thisInstanceKey
@@ -668,32 +324,459 @@ func Cli(command string, strict bool, instance string, sibling string, owner str
 			if instanceKey == nil {
 				log.Fatal("Cannot deduce instance:", instance)
 			}
-			err := inst.DeregisterHostnameUnresolve(instanceKey)
+			var err error
+			if *config.RuntimeCLIFlags.BinlogFile == "" {
+				err = inst.FlushBinaryLogs(instanceKey, 1)
+			} else {
+				_, err = inst.FlushBinaryLogsTo(instanceKey, *config.RuntimeCLIFlags.BinlogFile)
+			}
 			if err != nil {
 				log.Fatale(err)
 			}
 			fmt.Println(instanceKey.DisplayString())
 		}
-	case cliCommand("submit-pool-instances"):
+	case cliCommand("last-pseudo-gtid"):
 		{
-			if pool == "" {
-				log.Fatal("Please submit --pool")
+			if instanceKey == nil {
+				instanceKey = thisInstanceKey
 			}
-			err := inst.ApplyPoolInstances(pool, instance)
+			if instanceKey == nil {
+				log.Fatalf("Unresolved instance")
+			}
+			instance, err := inst.ReadTopologyInstance(instanceKey)
+			if err != nil {
+				log.Fatale(err)
+			}
+			if instance == nil {
+				log.Fatalf("Instance not found: %+v", *instanceKey)
+			}
+			coordinates, text, err := inst.FindLastPseudoGTIDEntry(instance, instance.RelaylogCoordinates, strict, nil)
+			if err != nil {
+				log.Fatale(err)
+			}
+			fmt.Println(fmt.Sprintf("%+v:%s", *coordinates, text))
+		}
+		// replication
+	case cliCommand("stop-slave"):
+		{
+			if instanceKey == nil {
+				instanceKey = thisInstanceKey
+			}
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			_, err := inst.StopSlave(instanceKey)
+			if err != nil {
+				log.Fatale(err)
+			}
+			fmt.Println(instanceKey.DisplayString())
+		}
+	case cliCommand("start-slave"):
+		{
+			if instanceKey == nil {
+				instanceKey = thisInstanceKey
+			}
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			_, err := inst.StartSlave(instanceKey)
+			if err != nil {
+				log.Fatale(err)
+			}
+			fmt.Println(instanceKey.DisplayString())
+		}
+	case cliCommand("restart-slave"):
+		{
+			if instanceKey == nil {
+				instanceKey = thisInstanceKey
+			}
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			_, err := inst.RestartSlave(instanceKey)
+			if err != nil {
+				log.Fatale(err)
+			}
+			fmt.Println(instanceKey.DisplayString())
+		}
+	case cliCommand("reset-slave"):
+		{
+			if instanceKey == nil {
+				instanceKey = thisInstanceKey
+			}
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			_, err := inst.ResetSlaveOperation(instanceKey)
+			if err != nil {
+				log.Fatale(err)
+			}
+			fmt.Println(instanceKey.DisplayString())
+		}
+	case cliCommand("detach-slave"):
+		{
+			if instanceKey == nil {
+				instanceKey = thisInstanceKey
+			}
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			_, err := inst.DetachSlaveOperation(instanceKey)
+			if err != nil {
+				log.Fatale(err)
+			}
+			fmt.Println(instanceKey.DisplayString())
+		}
+	case cliCommand("reattach-slave"):
+		{
+			if instanceKey == nil {
+				instanceKey = thisInstanceKey
+			}
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			_, err := inst.ReattachSlaveOperation(instanceKey)
+			if err != nil {
+				log.Fatale(err)
+			}
+			fmt.Println(instanceKey.DisplayString())
+		}
+	case cliCommand("enable-gtid"):
+		{
+			if instanceKey == nil {
+				instanceKey = thisInstanceKey
+			}
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			_, err := inst.EnableGTID(instanceKey)
+			if err != nil {
+				log.Fatale(err)
+			}
+			fmt.Println(instanceKey.DisplayString())
+		}
+	case cliCommand("disable-gtid"):
+		{
+			if instanceKey == nil {
+				instanceKey = thisInstanceKey
+			}
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			_, err := inst.DisableGTID(instanceKey)
+			if err != nil {
+				log.Fatale(err)
+			}
+			fmt.Println(instanceKey.DisplayString())
+		}
+	case cliCommand("skip-query"):
+		{
+			if instanceKey == nil {
+				instanceKey = thisInstanceKey
+			}
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			_, err := inst.SkipQuery(instanceKey)
+			if err != nil {
+				log.Fatale(err)
+			}
+			fmt.Println(instanceKey.DisplayString())
+		}
+		// move
+	case cliCommand("relocate"), cliCommand("relocate-below"):
+		{
+			if instanceKey == nil {
+				instanceKey = thisInstanceKey
+			}
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			if destinationKey == nil {
+				log.Fatal("Cannot deduce destination:", destination)
+			}
+			_, err := inst.RelocateBelow(instanceKey, destinationKey)
+			if err != nil {
+				log.Fatale(err)
+			}
+			fmt.Println(fmt.Sprintf("%s<%s", instanceKey.DisplayString(), destinationKey.DisplayString()))
+		}
+	case cliCommand("relocate-slaves"):
+		{
+			if instanceKey == nil {
+				instanceKey = thisInstanceKey
+			}
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			if destinationKey == nil {
+				log.Fatal("Cannot deduce destination:", destination)
+			}
+			slaves, err, errs := inst.RelocateSlaves(instanceKey, destinationKey, pattern)
+			if err != nil {
+				log.Fatale(err)
+			} else {
+				for _, e := range errs {
+					log.Errore(e)
+				}
+				for _, slave := range slaves {
+					fmt.Println(slave.Key.DisplayString())
+				}
+			}
+		}
+	case cliCommand("move-up"):
+		{
+			if instanceKey == nil {
+				instanceKey = thisInstanceKey
+			}
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			instance, err := inst.MoveUp(instanceKey)
+			if err != nil {
+				log.Fatale(err)
+			}
+			fmt.Println(fmt.Sprintf("%s<%s", instanceKey.DisplayString(), instance.MasterKey.DisplayString()))
+		}
+	case cliCommand("move-up-slaves"):
+		{
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+
+			movedSlaves, _, err, errs := inst.MoveUpSlaves(instanceKey, pattern)
+			if err != nil {
+				log.Fatale(err)
+			} else {
+				for _, e := range errs {
+					log.Errore(e)
+				}
+				for _, slave := range movedSlaves {
+					fmt.Println(slave.Key.DisplayString())
+				}
+			}
+		}
+	case cliCommand("move-below"):
+		{
+			if instanceKey == nil {
+				instanceKey = thisInstanceKey
+			}
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			if destinationKey == nil {
+				log.Fatal("Cannot deduce sibling:", destination)
+			}
+			_, err := inst.MoveBelow(instanceKey, destinationKey)
+			if err != nil {
+				log.Fatale(err)
+			}
+			fmt.Println(fmt.Sprintf("%s<%s", instanceKey.DisplayString(), destinationKey.DisplayString()))
+		}
+	case cliCommand("move-equivalent"):
+		{
+			if instanceKey == nil {
+				instanceKey = thisInstanceKey
+			}
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			if destinationKey == nil {
+				log.Fatal("Cannot deduce sibling:", destination)
+			}
+			_, err := inst.MoveEquivalent(instanceKey, destinationKey)
+			if err != nil {
+				log.Fatale(err)
+			}
+			fmt.Println(fmt.Sprintf("%s<%s", instanceKey.DisplayString(), destinationKey.DisplayString()))
+		}
+	case cliCommand("repoint"):
+		{
+			if instanceKey == nil {
+				instanceKey = thisInstanceKey
+			}
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			// destinationKey can be null, in which case the instance repoints to its existing master
+			instance, err := inst.Repoint(instanceKey, destinationKey, inst.GTIDHintNeutral)
+			if err != nil {
+				log.Fatale(err)
+			}
+			fmt.Println(fmt.Sprintf("%s<%s", instanceKey.DisplayString(), instance.MasterKey.DisplayString()))
+		}
+	case cliCommand("repoint-slaves"):
+		{
+			if instanceKey == nil {
+				instanceKey = thisInstanceKey
+			}
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			repointedSlaves, err, errs := inst.RepointSlavesTo(instanceKey, pattern, destinationKey)
+			if err != nil {
+				log.Fatale(err)
+			} else {
+				for _, e := range errs {
+					log.Errore(e)
+				}
+				for _, slave := range repointedSlaves {
+					fmt.Println(fmt.Sprintf("%s<%s", slave.Key.DisplayString(), instanceKey.DisplayString()))
+				}
+			}
+		}
+	case cliCommand("enslave-siblings"):
+		{
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			_, _, err := inst.EnslaveSiblings(instanceKey)
+			if err != nil {
+				log.Fatale(err)
+			}
+			fmt.Println(instanceKey.DisplayString())
+		}
+	case cliCommand("enslave-master"):
+		{
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			_, err := inst.EnslaveMaster(instanceKey)
+			if err != nil {
+				log.Fatale(err)
+			}
+			fmt.Println(instanceKey.DisplayString())
+		}
+	case cliCommand("make-co-master"):
+		{
+			if instanceKey == nil {
+				instanceKey = thisInstanceKey
+			}
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			_, err := inst.MakeCoMaster(instanceKey)
+			if err != nil {
+				log.Fatale(err)
+			}
+			fmt.Println(instanceKey.DisplayString())
+		}
+		// Pseudo-GTID
+	case cliCommand("match"), cliCommand("match-below"):
+		{
+			if instanceKey == nil {
+				instanceKey = thisInstanceKey
+			}
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			if destinationKey == nil {
+				log.Fatal("Cannot deduce destination:", destination)
+			}
+			_, _, err := inst.MatchBelow(instanceKey, destinationKey, true)
+			if err != nil {
+				log.Fatale(err)
+			}
+			fmt.Println(fmt.Sprintf("%s<%s", instanceKey.DisplayString(), destinationKey.DisplayString()))
+		}
+	case cliCommand("match-up"):
+		{
+			if instanceKey == nil {
+				instanceKey = thisInstanceKey
+			}
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			instance, _, err := inst.MatchUp(instanceKey, true)
+			if err != nil {
+				log.Fatale(err)
+			}
+			fmt.Println(fmt.Sprintf("%s<%s", instanceKey.DisplayString(), instance.MasterKey.DisplayString()))
+		}
+	case cliCommand("rematch"):
+		{
+			if instanceKey == nil {
+				instanceKey = thisInstanceKey
+			}
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			instance, _, err := inst.RematchSlave(instanceKey, true)
+			if err != nil {
+				log.Fatale(err)
+			}
+			fmt.Println(fmt.Sprintf("%s<%s", instanceKey.DisplayString(), instance.MasterKey.DisplayString()))
+		}
+	case cliCommand("get-candidate-slave"):
+		{
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+
+			instance, _, _, _, err := inst.GetCandidateSlave(instanceKey, false)
+			if err != nil {
+				log.Fatale(err)
+			} else {
+				fmt.Println(instance.Key.DisplayString())
+			}
+		}
+	case cliCommand("match-slaves"), cliCommand("multi-match-slaves"):
+		{
+			// Move all slaves of "instance" beneath "destination"
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			if destinationKey == nil {
+				log.Fatal("Cannot deduce destination:", destination)
+			}
+
+			matchedSlaves, _, err, errs := inst.MultiMatchSlaves(instanceKey, destinationKey, pattern)
+			if err != nil {
+				log.Fatale(err)
+			} else {
+				for _, e := range errs {
+					log.Errore(e)
+				}
+				for _, slave := range matchedSlaves {
+					fmt.Println(slave.Key.DisplayString())
+				}
+			}
+		}
+	case cliCommand("match-up-slaves"):
+		{
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+
+			matchedSlaves, _, err, errs := inst.MatchUpSlaves(instanceKey, pattern)
+			if err != nil {
+				log.Fatale(err)
+			} else {
+				for _, e := range errs {
+					log.Errore(e)
+				}
+				for _, slave := range matchedSlaves {
+					fmt.Println(slave.Key.DisplayString())
+				}
+			}
+		}
+	case cliCommand("regroup-slaves"):
+		{
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+
+			lostSlaves, equalSlaves, aheadSlaves, promotedSlave, err := inst.RegroupSlaves(instanceKey, false, func(candidateSlave *inst.Instance) { fmt.Println(candidateSlave.Key.DisplayString()) })
+			if promotedSlave == nil {
+				log.Fatalf("Could not regroup slaves of %+v; error: %+v", *instanceKey, err)
+			}
+			fmt.Println(fmt.Sprintf("%s lost: %d, trivial: %d, pseudo-gtid: %d",
+				promotedSlave.Key.DisplayString(), len(lostSlaves), len(equalSlaves), len(aheadSlaves)))
 			if err != nil {
 				log.Fatale(err)
 			}
 		}
-	case cliCommand("cluster-pool-instances"):
-		{
-			clusterPoolInstances, err := inst.ReadAllClusterPoolInstances()
-			if err != nil {
-				log.Fatale(err)
-			}
-			for _, clusterPoolInstance := range clusterPoolInstances {
-				fmt.Println(fmt.Sprintf("%s\t%s\t%s\t%s:%d", clusterPoolInstance.ClusterName, clusterPoolInstance.ClusterAlias, clusterPoolInstance.Pool, clusterPoolInstance.Hostname, clusterPoolInstance.Port))
-			}
-		}
+		// cluster
 	case cliCommand("clusters"):
 		{
 			clusters, err := inst.ReadClusters()
@@ -767,20 +850,8 @@ func Cli(command string, strict bool, instance string, sibling string, owner str
 		}
 	case cliCommand("which-cluster"):
 		{
-			if instanceKey == nil {
-				instanceKey = thisInstanceKey
-			}
-			if instanceKey == nil {
-				log.Fatalf("Unable to get cluster: unresolved instance")
-			}
-			instance, _, err := inst.ReadInstance(instanceKey)
-			if err != nil {
-				log.Fatale(err)
-			}
-			if instance == nil {
-				log.Fatalf("Instance not found: %+v", *instanceKey)
-			}
-			fmt.Println(instance.ClusterName)
+			clusterName := getClusterName(clusterAlias, instanceKey)
+			fmt.Println(clusterName)
 		}
 	case cliCommand("which-cluster-instances"):
 		{
@@ -820,13 +891,6 @@ func Cli(command string, strict bool, instance string, sibling string, owner str
 				fmt.Println(slave.Key.DisplayString())
 			}
 		}
-	case cliCommand("snapshot-topologies"):
-		{
-			err := inst.SnapshotTopologies()
-			if err != nil {
-				log.Fatale(err)
-			}
-		}
 	case cliCommand("instance-status"):
 		{
 			if instanceKey == nil {
@@ -853,14 +917,12 @@ func Cli(command string, strict bool, instance string, sibling string, owner str
 			}
 			fmt.Println(lag)
 		}
-	case cliCommand("replication-analysis"):
+		// meta
+	case cliCommand("snapshot-topologies"):
 		{
-			analysis, err := inst.GetReplicationAnalysis(false)
+			err := inst.SnapshotTopologies()
 			if err != nil {
 				log.Fatale(err)
-			}
-			for _, entry := range analysis {
-				fmt.Println(fmt.Sprintf("%s (cluster %s): %s", entry.AnalyzedInstanceKey.DisplayString(), entry.ClusterDetails.ClusterName, entry.Analysis))
 			}
 		}
 	case cliCommand("continuous"):
@@ -875,17 +937,51 @@ func Cli(command string, strict bool, instance string, sibling string, owner str
 			}
 			fmt.Println("hostname resolve cache cleared")
 		}
-	case cliCommand("resolve"):
+		// Recovery & analysis
+	case cliCommand("recover"), cliCommand("recover-lite"):
 		{
 			if instanceKey == nil {
 				log.Fatal("Cannot deduce instance:", instance)
 			}
-			if conn, err := net.Dial("tcp", instanceKey.DisplayString()); err == nil {
-				conn.Close()
-			} else {
+
+			actionTaken, promotedInstance, err := logic.CheckAndRecover(instanceKey, destinationKey, true, (command == "recover-lite"))
+			if err != nil {
 				log.Fatale(err)
 			}
-			fmt.Println(instanceKey.DisplayString())
+			if actionTaken {
+				fmt.Println(promotedInstance.Key.DisplayString())
+			}
+		}
+	case cliCommand("replication-analysis"):
+		{
+			analysis, err := inst.GetReplicationAnalysis(false)
+			if err != nil {
+				log.Fatale(err)
+			}
+			for _, entry := range analysis {
+				fmt.Println(fmt.Sprintf("%s (cluster %s): %s", entry.AnalyzedInstanceKey.DisplayString(), entry.ClusterDetails.ClusterName, entry.Analysis))
+			}
+		}
+		// pool
+	case cliCommand("submit-pool-instances"):
+		{
+			if pool == "" {
+				log.Fatal("Please submit --pool")
+			}
+			err := inst.ApplyPoolInstances(pool, instance)
+			if err != nil {
+				log.Fatale(err)
+			}
+		}
+	case cliCommand("cluster-pool-instances"):
+		{
+			clusterPoolInstances, err := inst.ReadAllClusterPoolInstances()
+			if err != nil {
+				log.Fatale(err)
+			}
+			for _, clusterPoolInstance := range clusterPoolInstances {
+				fmt.Println(fmt.Sprintf("%s\t%s\t%s\t%s:%d", clusterPoolInstance.ClusterName, clusterPoolInstance.ClusterAlias, clusterPoolInstance.Pool, clusterPoolInstance.Hostname, clusterPoolInstance.Port))
+			}
 		}
 	default:
 		log.Fatalf("Unknown command: \"%s\". Available commands (-c):\n\t%v", command, strings.Join(knownCommands, "\n\t"))

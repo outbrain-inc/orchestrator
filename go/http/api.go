@@ -70,6 +70,16 @@ func (this *HttpAPI) getInstanceKey(host string, port string) (inst.InstanceKey,
 	return *instanceKey, err
 }
 
+func (this *HttpAPI) getBinlogCoordinates(logFile string, logPos string) (inst.BinlogCoordinates, error) {
+	coordinates := inst.BinlogCoordinates{LogFile: logFile}
+	var err error
+	if coordinates.LogPos, err = strconv.ParseInt(logPos, 10, 0); err != nil {
+		return coordinates, fmt.Errorf("Invalid logPos: %s", logPos)
+	}
+
+	return coordinates, err
+}
+
 // Instance reads and returns an instance's details.
 func (this *HttpAPI) Instance(params martini.Params, r render.Render, req *http.Request) {
 	instanceKey, err := this.getInstanceKey(params["host"], params["port"])
@@ -126,7 +136,7 @@ func (this *HttpAPI) Refresh(params martini.Params, r render.Render, req *http.R
 		return
 	}
 
-	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Instance refreshed: %+v", instanceKey)})
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Instance refreshed: %+v", instanceKey), Details: instanceKey})
 }
 
 // Forget removes an instance entry fro backend database
@@ -321,6 +331,27 @@ func (this *HttpAPI) MoveUpSlaves(params martini.Params, r render.Render, req *h
 	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Moved up %d slaves of %+v below %+v; %d errors: %+v", len(slaves), instanceKey, newMaster.Key, len(errs), errs), Details: newMaster.Key})
 }
 
+// MoveUpSlaves attempts to move up all slaves of an instance
+func (this *HttpAPI) RepointSlaves(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+	if !isAuthorizedForAction(req, user) {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
+		return
+	}
+	instanceKey, err := this.getInstanceKey(params["host"], params["port"])
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+
+	slaves, err, _ := inst.RepointSlaves(&instanceKey, req.URL.Query().Get("pattern"))
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Repointed %d slaves of %+v", len(slaves), instanceKey), Details: instanceKey})
+}
+
 // MakeCoMaster attempts to make an instance co-master with its own master
 func (this *HttpAPI) MakeCoMaster(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
@@ -407,6 +438,48 @@ func (this *HttpAPI) ReattachSlave(params martini.Params, r render.Render, req *
 	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Slave reattached: %+v", instance.Key), Details: instance})
 }
 
+// EnableGTID attempts to enable GTID on a slave
+func (this *HttpAPI) EnableGTID(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+	if !isAuthorizedForAction(req, user) {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
+		return
+	}
+	instanceKey, err := this.getInstanceKey(params["host"], params["port"])
+
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+	instance, err := inst.EnableGTID(&instanceKey)
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Enabled GTID on %+v", instance.Key), Details: instance})
+}
+
+// DisableGTID attempts to disable GTID on a slave, and revert to binlog file:pos
+func (this *HttpAPI) DisableGTID(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+	if !isAuthorizedForAction(req, user) {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
+		return
+	}
+	instanceKey, err := this.getInstanceKey(params["host"], params["port"])
+
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+	instance, err := inst.DisableGTID(&instanceKey)
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Disabled GTID on %+v", instance.Key), Details: instance})
+}
+
 // MoveBelow attempts to move an instance below its supposed sibling
 func (this *HttpAPI) MoveBelow(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
@@ -475,6 +548,85 @@ func (this *HttpAPI) EnslaveMaster(params martini.Params, r render.Render, req *
 	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("%+v enslaved its master", instanceKey), Details: instance})
 }
 
+// RelocateBelow attempts to move an instance below another, orchestrator choosing the best (potentially multi-step)
+// relocation method
+func (this *HttpAPI) RelocateBelow(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+	if !isAuthorizedForAction(req, user) {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
+		return
+	}
+	instanceKey, err := this.getInstanceKey(params["host"], params["port"])
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+	belowKey, err := this.getInstanceKey(params["belowHost"], params["belowPort"])
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+
+	instance, err := inst.RelocateBelow(&instanceKey, &belowKey)
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Instance %+v relocated below %+v", instanceKey, belowKey), Details: instance})
+}
+
+// RelocateSlaves attempts to smartly relocate slaves of a given instance below another
+func (this *HttpAPI) RelocateSlaves(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+	if !isAuthorizedForAction(req, user) {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
+		return
+	}
+	instanceKey, err := this.getInstanceKey(params["host"], params["port"])
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+	belowKey, err := this.getInstanceKey(params["belowHost"], params["belowPort"])
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+
+	slaves, err, errs := inst.RelocateSlaves(&instanceKey, &belowKey, req.URL.Query().Get("pattern"))
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Relocated %d slaves of %+v below %+v; %d errors: %+v", len(slaves), instanceKey, belowKey, len(errs), errs), Details: slaves})
+}
+
+// MoveEquivalent attempts to move an instance below another, baseed on known equivalence master coordinates
+func (this *HttpAPI) MoveEquivalent(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+	if !isAuthorizedForAction(req, user) {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
+		return
+	}
+	instanceKey, err := this.getInstanceKey(params["host"], params["port"])
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+	belowKey, err := this.getInstanceKey(params["belowHost"], params["belowPort"])
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+
+	instance, err := inst.MoveEquivalent(&instanceKey, &belowKey)
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Instance %+v relocated via equivalence coordinates below %+v", instanceKey, belowKey), Details: instance})
+}
+
 // LastPseudoGTID attempts to find the last pseugo-gtid entry in an instance
 func (this *HttpAPI) LastPseudoGTID(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
@@ -527,7 +679,7 @@ func (this *HttpAPI) MatchBelow(params martini.Params, r render.Render, req *htt
 		return
 	}
 
-	instance, matchedCoordinates, err := inst.MatchBelow(&instanceKey, &belowKey, true, true)
+	instance, matchedCoordinates, err := inst.MatchBelow(&instanceKey, &belowKey, true)
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
@@ -548,7 +700,7 @@ func (this *HttpAPI) MatchUp(params martini.Params, r render.Render, req *http.R
 		return
 	}
 
-	instance, matchedCoordinates, err := inst.MatchUp(&instanceKey, true, true)
+	instance, matchedCoordinates, err := inst.MatchUp(&instanceKey, true)
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
@@ -713,6 +865,27 @@ func (this *HttpAPI) StartSlave(params martini.Params, r render.Render, req *htt
 	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Slave started: %+v", instance.Key), Details: instance})
 }
 
+// RestartSlave stops & starts replication on given instance
+func (this *HttpAPI) RestartSlave(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+	if !isAuthorizedForAction(req, user) {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
+		return
+	}
+	instanceKey, err := this.getInstanceKey(params["host"], params["port"])
+
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+	instance, err := inst.RestartSlave(&instanceKey)
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Slave restarted: %+v", instance.Key), Details: instance})
+}
+
 // StopSlave stops replication on given instance
 func (this *HttpAPI) StopSlave(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
@@ -753,6 +926,33 @@ func (this *HttpAPI) StopSlaveNicely(params martini.Params, r render.Render, req
 	}
 
 	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Slave stopped nicely: %+v", instance.Key), Details: instance})
+}
+
+// MasterEquivalent provides (possibly empty) list of master coordinates equivalent to the given ones
+func (this *HttpAPI) MasterEquivalent(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+	if !isAuthorizedForAction(req, user) {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
+		return
+	}
+	instanceKey, err := this.getInstanceKey(params["host"], params["port"])
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+	coordinates, err := this.getBinlogCoordinates(params["logFile"], params["logPos"])
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+	instanceCoordinates := &inst.InstanceBinlogCoordinates{Key: instanceKey, Coordinates: coordinates}
+
+	equivalentCoordinates, err := inst.GetEquivalentMasterCoordinates(instanceCoordinates)
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Found %+v equivalent coordinates", len(equivalentCoordinates)), Details: equivalentCoordinates})
 }
 
 // SetReadOnly sets the global read_only variable
@@ -857,6 +1057,18 @@ func (this *HttpAPI) ClusterInfo(params martini.Params, r render.Render, req *ht
 	}
 
 	r.JSON(200, clusterInfo)
+}
+
+// Cluster provides list of instances in given cluster
+func (this *HttpAPI) ClusterInfoByAlias(params martini.Params, r render.Render, req *http.Request) {
+	clusterName, err := inst.GetClusterByAlias(params["clusterAlias"])
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
+		return
+	}
+
+	params["clusterName"] = clusterName
+	this.ClusterInfo(params, r, req)
 }
 
 // ClusterOSCSlaves returns heuristic list of OSC slaves
@@ -1566,48 +1778,65 @@ func (this *HttpAPI) RecentlyActiveInstanceRecovery(params martini.Params, r ren
 
 // RegisterRequests makes for the de-facto list of known API calls
 func (this *HttpAPI) RegisterRequests(m *martini.ClassicMartini) {
+	// Instance meta
 	m.Get("/api/instance/:host/:port", this.Instance)
 	m.Get("/api/discover/:host/:port", this.Discover)
 	m.Get("/api/refresh/:host/:port", this.Refresh)
 	m.Get("/api/forget/:host/:port", this.Forget)
 	m.Get("/api/resolve/:host/:port", this.Resolve)
-	m.Get("/api/move-up/:host/:port", this.MoveUp)
-	m.Get("/api/move-up-slaves/:host/:port", this.MoveUpSlaves)
-	m.Get("/api/make-co-master/:host/:port", this.MakeCoMaster)
-	m.Get("/api/reset-slave/:host/:port", this.ResetSlave)
-	m.Get("/api/detach-slave/:host/:port", this.DetachSlave)
-	m.Get("/api/reattach-slave/:host/:port", this.ReattachSlave)
-	m.Get("/api/move-below/:host/:port/:siblingHost/:siblingPort", this.MoveBelow)
-	m.Get("/api/enslave-siblings/:host/:port", this.EnslaveSiblings)
-	m.Get("/api/enslave-master/:host/:port", this.EnslaveMaster)
+	// Instance
 	m.Get("/api/last-pseudo-gtid/:host/:port", this.LastPseudoGTID)
-	m.Get("/api/match-below/:host/:port/:belowHost/:belowPort", this.MatchBelow)
-	m.Get("/api/match-up/:host/:port", this.MatchUp)
-	m.Get("/api/multi-match-slaves/:host/:port/:belowHost/:belowPort", this.MultiMatchSlaves)
-	m.Get("/api/match-up-slaves/:host/:port", this.MatchUpSlaves)
-	m.Get("/api/regroup-slaves/:host/:port", this.RegroupSlaves)
-	m.Get("/api/make-master/:host/:port", this.MakeMaster)
-	m.Get("/api/make-local-master/:host/:port", this.MakeLocalMaster)
 	m.Get("/api/begin-maintenance/:host/:port/:owner/:reason", this.BeginMaintenance)
 	m.Get("/api/end-maintenance/:host/:port", this.EndMaintenanceByInstanceKey)
 	m.Get("/api/end-maintenance/:maintenanceKey", this.EndMaintenance)
 	m.Get("/api/begin-downtime/:host/:port/:owner/:reason", this.BeginDowntime)
 	m.Get("/api/end-downtime/:host/:port", this.EndDowntime)
-	m.Get("/api/skip-query/:host/:port", this.SkipQuery)
-	m.Get("/api/start-slave/:host/:port", this.StartSlave)
-	m.Get("/api/stop-slave/:host/:port", this.StopSlave)
-	m.Get("/api/stop-slave-nice/:host/:port", this.StopSlaveNicely)
 	m.Get("/api/set-read-only/:host/:port", this.SetReadOnly)
 	m.Get("/api/set-writeable/:host/:port", this.SetWriteable)
 	m.Get("/api/kill-query/:host/:port/:process", this.KillQuery)
-	m.Get("/api/maintenance", this.Maintenance)
+	// Replication
+	m.Get("/api/start-slave/:host/:port", this.StartSlave)
+	m.Get("/api/restart-slave/:host/:port", this.RestartSlave)
+	m.Get("/api/stop-slave/:host/:port", this.StopSlave)
+	m.Get("/api/stop-slave-nice/:host/:port", this.StopSlaveNicely)
+	m.Get("/api/reset-slave/:host/:port", this.ResetSlave)
+	m.Get("/api/detach-slave/:host/:port", this.DetachSlave)
+	m.Get("/api/reattach-slave/:host/:port", this.ReattachSlave)
+	m.Get("/api/master-equivalent/:host/:port/:logFile/:logPos", this.MasterEquivalent)
+	m.Get("/api/skip-query/:host/:port", this.SkipQuery)
+	m.Get("/api/enable-gtid/:host/:port", this.EnableGTID)
+	m.Get("/api/disable-gtid/:host/:port", this.DisableGTID)
+	// Move
+	m.Get("/api/move-up/:host/:port", this.MoveUp)
+	m.Get("/api/move-up-slaves/:host/:port", this.MoveUpSlaves)
+	m.Get("/api/move-below/:host/:port/:siblingHost/:siblingPort", this.MoveBelow)
+	m.Get("/api/move-equivalent/:host/:port/:belowHost/:belowPort", this.MoveEquivalent)
+	m.Get("/api/repoint-slaves/:host/:port", this.RepointSlaves)
+	m.Get("/api/make-co-master/:host/:port", this.MakeCoMaster)
+	m.Get("/api/enslave-siblings/:host/:port", this.EnslaveSiblings)
+	m.Get("/api/enslave-master/:host/:port", this.EnslaveMaster)
+	m.Get("/api/relocate/:host/:port/:belowHost/:belowPort", this.RelocateBelow)
+	m.Get("/api/relocate-below/:host/:port/:belowHost/:belowPort", this.RelocateBelow)
+	m.Get("/api/relocate-slaves/:host/:port/:belowHost/:belowPort", this.RelocateSlaves)
+	m.Get("/api/match/:host/:port/:belowHost/:belowPort", this.MatchBelow)
+	m.Get("/api/match-below/:host/:port/:belowHost/:belowPort", this.MatchBelow)
+	m.Get("/api/match-up/:host/:port", this.MatchUp)
+	m.Get("/api/match-slaves/:host/:port/:belowHost/:belowPort", this.MultiMatchSlaves)
+	m.Get("/api/multi-match-slaves/:host/:port/:belowHost/:belowPort", this.MultiMatchSlaves)
+	m.Get("/api/match-up-slaves/:host/:port", this.MatchUpSlaves)
+	m.Get("/api/regroup-slaves/:host/:port", this.RegroupSlaves)
+	m.Get("/api/make-master/:host/:port", this.MakeMaster)
+	m.Get("/api/make-local-master/:host/:port", this.MakeLocalMaster)
+	// Cluster
 	m.Get("/api/cluster/:clusterName", this.Cluster)
 	m.Get("/api/cluster/alias/:clusterAlias", this.ClusterByAlias)
 	m.Get("/api/cluster-info/:clusterName", this.ClusterInfo)
+	m.Get("/api/cluster-info/alias/:clusterAlias", this.ClusterInfoByAlias)
 	m.Get("/api/cluster-osc-slaves/:clusterName", this.ClusterOSCSlaves)
 	m.Get("/api/set-cluster-alias/:clusterName", this.SetClusterAlias)
 	m.Get("/api/clusters", this.Clusters)
 	m.Get("/api/clusters-info", this.ClustersInfo)
+	// General
 	m.Get("/api/search/:searchString", this.Search)
 	m.Get("/api/search", this.Search)
 	m.Get("/api/problems", this.Problems)
@@ -1616,7 +1845,8 @@ func (this *HttpAPI) RegisterRequests(m *martini.ClassicMartini) {
 	m.Get("/api/long-queries/:filter", this.LongQueries)
 	m.Get("/api/audit", this.Audit)
 	m.Get("/api/audit/:page", this.Audit)
-	// General
+	// Meta
+	m.Get("/api/maintenance", this.Maintenance)
 	m.Get("/api/headers", this.Headers)
 	m.Get("/api/health", this.Health)
 	m.Get("/api/lb-check", this.LBCheck)
@@ -1626,6 +1856,7 @@ func (this *HttpAPI) RegisterRequests(m *martini.ClassicMartini) {
 	m.Get("/api/reload-cluster-alias", this.ReloadClusterAlias)
 	m.Get("/api/hostname-resolve-cache", this.HostnameResolveCache)
 	m.Get("/api/reset-hostname-resolve-cache", this.ResetHostnameResolveCache)
+	// Pool
 	m.Get("/api/submit-pool-instances/:pool", this.SubmitPoolInstances)
 	m.Get("/api/cluster-pool-instances/:clusterName", this.ReadClusterPoolInstances)
 	// Recovery

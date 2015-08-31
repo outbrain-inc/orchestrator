@@ -245,6 +245,7 @@ type Instance struct {
 	LastIOError            string
 	SecondsBehindMaster    sql.NullInt64
 	SQLDelay               uint
+	ExecutedGtidSet        string
 
 	SlaveLagSeconds     sql.NullInt64
 	SlaveHosts          InstanceKeyMap
@@ -282,7 +283,27 @@ func (this *Instance) MajorVersion() []string {
 	return strings.Split(this.Version, ".")[:2]
 }
 
-// MajorVersion tests this instance against another and returns true if this instance is of a smaller "major" varsion.
+func (this *Instance) IsMySQL51() bool {
+	return strings.Join(this.MajorVersion(), ".") == "5.1"
+}
+
+func (this *Instance) IsMySQL55() bool {
+	return strings.Join(this.MajorVersion(), ".") == "5.5"
+}
+
+func (this *Instance) IsMySQL56() bool {
+	return strings.Join(this.MajorVersion(), ".") == "5.6"
+}
+
+func (this *Instance) IsMySQL57() bool {
+	return strings.Join(this.MajorVersion(), ".") == "5.7"
+}
+
+func (this *Instance) IsMySQL58() bool {
+	return strings.Join(this.MajorVersion(), ".") == "5.8"
+}
+
+// IsSmallerMajorVersion tests this instance against another and returns true if this instance is of a smaller "major" varsion.
 // e.g. 5.5.36 is NOT a smaller major version as comapred to 5.5.36, but IS as compared to 5.6.9
 func (this *Instance) IsSmallerMajorVersion(other *Instance) bool {
 	thisMajorVersion := this.MajorVersion()
@@ -298,6 +319,12 @@ func (this *Instance) IsSmallerMajorVersion(other *Instance) bool {
 		}
 	}
 	return false
+}
+
+// IsSmallerMajorVersionByString cehcks if this instance has a smaller major version number than given one
+func (this *Instance) IsSmallerMajorVersionByString(otherVersion string) bool {
+	other := &Instance{Version: otherVersion}
+	return this.IsSmallerMajorVersion(other)
 }
 
 // IsMariaDB checkes whether this is any version of MariaDB
@@ -318,6 +345,20 @@ func (this *Instance) IsBinlogServer() bool {
 	return false
 }
 
+// IsOracleMySQL checkes whether this is an Oracle MySQL distribution
+func (this *Instance) IsOracleMySQL() bool {
+	if this.IsMariaDB() {
+		return false
+	}
+	if this.isMaxScale() {
+		return false
+	}
+	if this.IsBinlogServer() {
+		return false
+	}
+	return true
+}
+
 // IsSlave makes simple heuristics to decide whether this insatnce is a slave of another instance
 func (this *Instance) IsSlave() bool {
 	return this.MasterKey.Hostname != "" && this.MasterKey.Hostname != "_" && this.MasterKey.Port != 0 && (this.ReadBinlogCoordinates.LogFile != "" || this.UsingGTID())
@@ -336,6 +377,36 @@ func (this *Instance) SQLThreadUpToDate() bool {
 // UsingGTID returns true when this slave is currently replicating via GTID (either Oracle or MariaDB)
 func (this *Instance) UsingGTID() bool {
 	return this.UsingOracleGTID || this.UsingMariaDBGTID
+}
+
+// NextGTID returns the next (Oracle) GTID to be executed. Useful for skipping queries
+func (this *Instance) NextGTID() (string, error) {
+	if this.ExecutedGtidSet == "" {
+		return "", fmt.Errorf("No value found in Executed_Gtid_Set; cannot compute NextGTID")
+	}
+
+	firstToken := func(s string, delimiter string) string {
+		tokens := strings.Split(s, delimiter)
+		return tokens[0]
+	}
+	lastToken := func(s string, delimiter string) string {
+		tokens := strings.Split(s, delimiter)
+		return tokens[len(tokens)-1]
+	}
+	// executed GTID set: 4f6d62ed-df65-11e3-b395-60672090eb04:1,b9b4712a-df64-11e3-b391-60672090eb04:1-6
+	executedGTIDsFromMaster := lastToken(this.ExecutedGtidSet, ",")
+	// executedGTIDsFromMaster: b9b4712a-df64-11e3-b391-60672090eb04:1-6
+	executedRange := lastToken(executedGTIDsFromMaster, ":")
+	// executedRange: 1-6
+	lastExecutedNumberToken := lastToken(executedRange, "-")
+	// lastExecutedNumber: 6
+	lastExecutedNumber, err := strconv.Atoi(lastExecutedNumberToken)
+	if err != nil {
+		return "", err
+	}
+	nextNumber := lastExecutedNumber + 1
+	nextGTID := fmt.Sprintf("%s:%d", firstToken(executedGTIDsFromMaster, ":"), nextNumber)
+	return nextGTID, nil
 }
 
 // AddSlaveKey adds a slave to the list of this instance's slaves.

@@ -21,6 +21,20 @@
 	</div>
 </div>
 
+<li id="li-move-instance-method" style="display:none">
+	<div id="move-instance-method" class="dropdown">
+	  <button class="btn btn-xs dropdown-toggle" type="button" id="move-instance-method-button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="true">
+	    Move
+	    <span class="caret"></span>
+	  </button>
+	  <ul class="dropdown-menu" aria-labelledby="move-instance-method">
+	    <li><a href="#" data-method="smart" title="Let orchestrator choose slave relocating method">Smart mode</a></li>
+	    <li><a href="#" data-method="classic" title="Move slaves using classic binlog file name and position">Classic mode</a></li>
+	    <li><a href="#" data-method="pseudo-gtid" title="Move slaves via Pseudo-GTID match of binary logs">Pseudo GTID mode</a></li>
+	  </ul>
+</div>
+</li>
+
 <script>
 	function currentClusterName() {
 	    return "{{.clusterName}}";
@@ -35,7 +49,7 @@
     	return "{{.compactDisplay}}" == "true";
     }
 </script>
-<script type="text/javascript" src="/js/jquery-ui-1.10.4.custom.min.js"></script>        
+<script src="/js/jquery-ui.min.js"></script>        
 <script src="/js/d3.v3.min.js"></script>
 <script src="/js/md5.js"></script>
 <script src="/js/cluster-analysis-shared.js"></script>

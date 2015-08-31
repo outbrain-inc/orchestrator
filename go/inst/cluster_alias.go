@@ -28,7 +28,7 @@ var clusterAliasMap = make(map[string]string)
 var clusterAliasMapMutex = &sync.Mutex{}
 
 func ApplyClusterAlias(clusterInfo *ClusterInfo) {
-	for pattern, _ := range config.Config.ClusterNameToAlias {
+	for pattern := range config.Config.ClusterNameToAlias {
 		if matched, _ := regexp.MatchString(pattern, clusterInfo.ClusterName); matched {
 			clusterInfo.ClusterAlias = config.Config.ClusterNameToAlias[pattern]
 		}
@@ -66,7 +66,7 @@ func GetClusterByAlias(alias string) (string, error) {
 			if clusterName == "" {
 				clusterName = mappedName
 			} else {
-				return "", fmt.Errorf("GetClusterByAlias: multiple clusters for alias %s", alias)
+				return clusterName, fmt.Errorf("GetClusterByAlias: multiple clusters for alias %s", alias)
 			}
 		}
 	}

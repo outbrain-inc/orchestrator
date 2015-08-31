@@ -3,6 +3,12 @@ var refreshIntervalSeconds = 60 ; // seconds
 var secondsTillRefresh = refreshIntervalSeconds; 
 var nodeModalVisible = false;
 
+reloadPageHint = {
+		hint: "",
+		hostname: "",
+		port: ""
+}
+
 var errorMapping = {
    		"inMaintenanceProblem": {"badge": "label-info", "description": "In maintenance"}, 
    		"lastCheckInvalidProblem": {"badge": "label-fatal", "description": "Last check invalid"}, 
@@ -75,6 +81,14 @@ function getInstanceId(host, port) {
     return "instance__" + host.replace(/[.]/g, "_") + "__" + port
 }
 
+
+function canonizeInstanceTitle(title) {
+    if (typeof removeTextFromHostnameDisplay != "undefined" && removeTextFromHostnameDisplay()) {
+        return title.replace(removeTextFromHostnameDisplay(), '');
+    } 
+	return title;
+}
+
 function commonSuffixLength(strings) {
 	if (strings.length == 0) {
 		return 0;
@@ -128,27 +142,34 @@ function addInfo(alertText) {
 	return addAlert(alertText, "info");
 }
 
-function apiCommand(uri) {
+function apiCommand(uri, hint) {
 	showLoader();
     $.get(uri, function (operationResult) {
 		hideLoader();
 		if (operationResult.Code == "ERROR") {
 			addAlert(operationResult.Message)
 		} else {
-			reloadWithOperationResult(operationResult);
+			reloadWithOperationResult(operationResult, hint);
 		}	
     }, "json");	
     return false;
 }
 
 
-function reloadWithMessage(msg) {
-    window.location.href = window.location.href.split("#")[0].split("?")[0] + "?orchestrator-msg="+ encodeURIComponent(msg);
+function reloadWithMessage(msg, details, hint) {
+	var hostname = "";
+	var port = "";
+	if (details) {
+		hostname = details.Hostname || hostname
+		port = details.Port || port
+	}
+	hint = hint || "";
+    window.location.href = window.location.href.split("#")[0].split("?")[0] + "?orchestrator-msg="+ encodeURIComponent(msg)+"&hostname="+hostname+"&port="+port+"&hint="+hint;
 }
 
-function reloadWithOperationResult(operationResult) {
+function reloadWithOperationResult(operationResult, hint) {
     var msg = operationResult.Message;
-    reloadWithMessage(msg);
+    reloadWithMessage(msg, operationResult.Details, hint);
 }
 
 
@@ -177,6 +198,9 @@ function addModalAlert(alertText) {
 }
 
 function openNodeModal(node) {
+	if (!node) {
+		return false;
+	}
 	if (node.isAggregate) {
 		return false;
 	}
@@ -195,6 +219,7 @@ function openNodeModal(node) {
         
         td = addNodeModalDataAttribute("Replication running", booleanString(node.replicationRunning));
         $('#node_modal button[data-btn=start-slave]').appendTo(td.find("div"))
+        $('#node_modal button[data-btn=restart-slave]').appendTo(td.find("div"))
         $('#node_modal [data-btn-group=stop-slave]').appendTo(td.find("div"))
         
         if (!node.replicationRunning) {
@@ -205,7 +230,30 @@ function openNodeModal(node) {
         addNodeModalDataAttribute("Seconds behind master", node.SecondsBehindMaster.Valid ? node.SecondsBehindMaster.Int64 : "null");
         addNodeModalDataAttribute("Replication lag", node.SlaveLagSeconds.Valid ? node.SlaveLagSeconds.Int64 : "null");
         addNodeModalDataAttribute("SQL delay", node.SQLDelay);
+
+        $('#node_modal [data-btn-group=move-equivalent]').hide();
+        var td = addNodeModalDataAttribute("Master coordinates", node.ExecBinlogCoordinates.LogFile+":"+node.ExecBinlogCoordinates.LogPos);
+        $('#node_modal [data-btn-group=move-equivalent]').appendTo(td.find("div"))
+        $('#node_modal [data-btn-group=move-equivalent] ul').empty();
+		$.get("/api/master-equivalent/"+node.MasterKey.Hostname+"/"+node.MasterKey.Port+"/"+node.ExecBinlogCoordinates.LogFile+"/"+node.ExecBinlogCoordinates.LogPos, function(equivalenceResult) {
+			if (!equivalenceResult.Details) {
+				return false;
+			}
+			equivalenceResult.Details.forEach(function(equivalence) {
+				if (equivalence.Key.Hostname == node.Key.Hostname && equivalence.Key.Port == node.Key.Port) {
+					// This very instance; will not move below itself
+					return;
+				}
+		    	var title = canonizeInstanceTitle(equivalence.Key.Hostname+':'+equivalence.Key.Port);
+		    	$('#node_modal [data-btn-group=move-equivalent] ul').append('<li><a href="#" data-btn="move-equivalent" data-hostname="'+equivalence.Key.Hostname+'" data-port="'+equivalence.Key.Port+'">'+title+'</a></li>');
+		    });
+
+			if ($('#node_modal [data-btn-group=move-equivalent] ul li').length) {
+				$('#node_modal [data-btn-group=move-equivalent]').show();
+			}
+		}, "json");
     }
+    addNodeModalDataAttribute("Self coordinates", node.SelfBinlogCoordinates.LogFile+":"+node.SelfBinlogCoordinates.LogPos);
     var td = addNodeModalDataAttribute("Num slaves", node.SlaveHosts.length);
     $('#node_modal button[data-btn=move-up-slaves]').appendTo(td.find("div"))
     $('#node_modal button[data-btn=match-up-slaves]').appendTo(td.find("div"))
@@ -220,8 +268,13 @@ function openNodeModal(node) {
     addNodeModalDataAttribute("Has binary logs", booleanString(node.LogBinEnabled));
     var td = addNodeModalDataAttribute("Logs slave updates", booleanString(node.LogSlaveUpdatesEnabled));
     $('#node_modal button[data-btn=enslave-siblings]').appendTo(td.find("div"))
-        
+
+    var td = addNodeModalDataAttribute("GTID", booleanString(node.usingGTID));
+    $('#node_modal button[data-btn=enable-gtid]').appendTo(td.find("div"))
+    $('#node_modal button[data-btn=disable-gtid]').appendTo(td.find("div"))
+
     addNodeModalDataAttribute("Uptime", node.Uptime);
+
     addNodeModalDataAttribute("Cluster",
             '<a href="/web/cluster/'+node.ClusterName+'">'+node.ClusterName+'</a>');
     addNodeModalDataAttribute("Agent",
@@ -245,13 +298,16 @@ function openNodeModal(node) {
     	apiCommand("/api/end-maintenance/"+node.Key.Hostname+"/"+node.Key.Port);
     });
     $('#node_modal button[data-btn=refresh-instance]').click(function(){
-    	apiCommand("/api/refresh/"+node.Key.Hostname+"/"+node.Key.Port);
+    	apiCommand("/api/refresh/"+node.Key.Hostname+"/"+node.Key.Port, "refresh");
     });
     $('#node_modal button[data-btn=skip-query]').click(function(){
     	apiCommand("/api/skip-query/"+node.Key.Hostname+"/"+node.Key.Port);
     });
     $('#node_modal button[data-btn=start-slave]').click(function(){
     	apiCommand("/api/start-slave/"+node.Key.Hostname+"/"+node.Key.Port);
+    });
+    $('#node_modal button[data-btn=restart-slave]').click(function(){
+    	apiCommand("/api/restart-slave/"+node.Key.Hostname+"/"+node.Key.Port);
     });
     $('#node_modal [data-btn=stop-slave]').click(function(){
     	apiCommand("/api/stop-slave/"+node.Key.Hostname+"/"+node.Key.Port);
@@ -278,6 +334,12 @@ function openNodeModal(node) {
     $('#node_modal button[data-btn=set-writeable]').click(function(){
     	apiCommand("/api/set-writeable/"+node.Key.Hostname+"/"+node.Key.Port);
     });
+    $('#node_modal button[data-btn=enable-gtid]').click(function(){
+    	apiCommand("/api/enable-gtid/"+node.Key.Hostname+"/"+node.Key.Port);
+    });
+    $('#node_modal button[data-btn=disable-gtid]').click(function(){
+    	apiCommand("/api/disable-gtid/"+node.Key.Hostname+"/"+node.Key.Port);
+    });
     $('#node_modal button[data-btn=forget-instance]').click(function(){
     	var message = "<p>Are you sure you wish to forget <code><strong>" + node.Key.Hostname + ":" + node.Key.Port +
 			"</strong></code>?" +
@@ -289,6 +351,12 @@ function openNodeModal(node) {
 			}
 		}); 
     	return false;
+    });
+
+    $("body").on("click", "#node_modal a[data-btn=move-equivalent]", function(event) {
+    	var targetHostname = $(event.target).attr("data-hostname");
+    	var targetPort = $(event.target).attr("data-port");
+    	apiCommand("/api/move-equivalent/"+node.Key.Hostname+"/"+node.Key.Port+"/"+targetHostname+"/"+targetPort);
     });
 
     if (node.inMaintenance) {
@@ -305,13 +373,14 @@ function openNodeModal(node) {
     }
 	$('#node_modal button[data-btn=skip-query]').hide();
 	$('#node_modal button[data-btn=start-slave]').hide();
+	$('#node_modal button[data-btn=restart-slave]').hide();
 	$('#node_modal [data-btn-group=stop-slave]').hide();
 	
     if (node.MasterKey.Hostname) {
         if (node.replicationRunning || node.replicationAttemptingToRun) {
         	$('#node_modal [data-btn-group=stop-slave]').show();
-        } 
-        if (!node.replicationRunning) {
+        	$('#node_modal button[data-btn=restart-slave]').show();
+        } else if (!node.replicationRunning) {
         	$('#node_modal button[data-btn=start-slave]').show();
         }
         if (!node.Slave_SQL_Running && node.LastSQLError) {
@@ -325,6 +394,14 @@ function openNodeModal(node) {
     	$('#node_modal button[data-btn=set-writeable]').show();
     } else {
     	$('#node_modal button[data-btn=set-read-only]').show();
+    }
+
+	$('#node_modal button[data-btn=enable-gtid]').hide();
+	$('#node_modal button[data-btn=disable-gtid]').hide();
+    if (node.usingGTID) {
+    	$('#node_modal button[data-btn=disable-gtid]').show();
+    } else {
+    	$('#node_modal button[data-btn=enable-gtid]').show();
     }
 
     $('#node_modal button[data-btn=move-up-slaves]').hide();
@@ -473,16 +550,13 @@ function normalizeInstances(instances, maintenanceList) {
     var hostNames = instances.map(function (instance) {
         return instance.title
     });
-    if (typeof removeTextFromHostnameDisplay != "undefined" && removeTextFromHostnameDisplay()) {
-        instances.forEach(function (instance) {
-        	instance.canonicalTitle = instance.title.replace(removeTextFromHostnameDisplay(), '');
-        });
-    } else {
-        var suffixLength = commonSuffixLength(hostNames);
-        instances.forEach(function (instance) {
-        	instance.canonicalTitle = instance.title.substring(0, instance.title.length - suffixLength);
-        });
-    }
+    var suffixLength = commonSuffixLength(hostNames);
+    instances.forEach(function (instance) {
+    	instance.canonicalTitle = canonizeInstanceTitle(instance.title)
+    	if (instance.canonicalTitle == instance.title) {
+	       	instance.canonicalTitle = instance.title.substring(0, instance.title.length - suffixLength);
+    	}
+    });
     var instancesMap = instances.reduce(function (map, instance) {
         map[instance.id] = instance;
         return map;
@@ -733,6 +807,12 @@ $(document).ready(function() {
     var orchestratorMsg = getParameterByName("orchestrator-msg")
     if (orchestratorMsg) {
         addInfo(orchestratorMsg)
+       
+        reloadPageHint = {
+    		hint: getParameterByName("hint"),
+    		hostname: getParameterByName("hostname"),
+    		port: getParameterByName("port")
+        }
         history.pushState(null, document.title, location.href.split("?orchestrator-msg=")[0])
     }
 	if (typeof($.cookie("auto-refresh"))==='undefined') {
