@@ -266,6 +266,10 @@ body {
     font-size: 12px;
 }
 
+#node_modal .hidden-zone {
+	display: none;
+}
+
 .modal-content .btn {
     font-size: 11px;
     line-height: 16px;
@@ -355,7 +359,7 @@ body {
 #cluster_sidebar {
 	float:left;
 	position: absolute;
-	z-index:9999;
+	z-index: 10001;
 }
 
 #cluster_sidebar li {

@@ -235,12 +235,23 @@ function generateInstanceDiv(svgInstanceWrapper, nodesMap) {
     	$(popoverElement).data("svg-instance-wrapper", svgInstanceWrapper);
     	
     	var id = $(svgInstanceWrapper).attr("data-fo-id");
-    	var node = nodesMap[id];
-		renderInstanceElement(popoverElement, node, "cluster");
-		if (node.children) {
-            var trailerElement = $('<div class="popover left instance-trailer" data-nodeid="'+node.id+'"><div><span class="glyphicon glyphicon-chevron-left" title="Drag and drop slaves of this instance"></span></div></div>').appendTo("#cluster_container");
+    	var instance = nodesMap[id];
+		renderInstanceElement(popoverElement, instance, "cluster");
+		if (instance.children) {
+            var trailerElement = $('<div class="popover left instance-trailer" data-nodeid="'+instance.id+'"><div><span class="glyphicon glyphicon-chevron-left" title="Drag and drop slaves of this instance"></span></div></div>').appendTo("#cluster_container");
             popoverElement.data("instance-trailer", trailerElement);
 		}
+	    if ($.cookie("colorize-dc") == "true") {
+	    	var dcColor = dcColorsMap[instance.DataCenter];
+	        $(popoverElement).css("border-color", dcColor);
+	        $(popoverElement).css("border-width", 2);
+
+	        var trailerElement = $(popoverElement).data("instance-trailer");
+	        if (trailerElement) {
+		        $(trailerElement).css("border-color", dcColor);
+		        $(trailerElement).css("border-width", 2);
+	        }
+	    }
     }	
 }
 
@@ -400,9 +411,17 @@ function moveInstance(node, droppableNode, shouldApply) {
 		}
 		return {accept: "warning", type: "relocate < " + droppableTitle};
 	}
+	var gtidBelowFunc = null;
+	var gtidOperationName = "";
 	if (moveInstanceMethod == "pseudo-gtid") {
-		var gtidBelowFunc = matchBelow
-		//~~~TODO: when GTID is fully supported: gtidBelowFunc = moveBelow
+		gtidBelowFunc = matchBelow;
+		gtidOperationName = "match";
+	}
+	if (moveInstanceMethod == "gtid") {
+		gtidBelowFunc = moveBelowGTID;
+		gtidOperationName = "move:gtid";
+	}
+	if (gtidBelowFunc != null) {
 		// Moving via GTID or Pseudo GTID
 		if (node.hasConnectivityProblem || droppableNode.hasConnectivityProblem || droppableNode.isAggregate) {
 			// Obviously can't handle.
@@ -425,21 +444,21 @@ function moveInstance(node, droppableNode, shouldApply) {
 			if (shouldApply) {
 				gtidBelowFunc(node, droppableNode);
 			}
-			return {accept: "ok", type: gtidBelowFunc.name + " " + droppableTitle};
+			return {accept: "ok", type: gtidOperationName + " " + droppableTitle};
 		}
 		if (isReplicationBehindSibling(node, droppableNode)) {
 			// verified that node isn't more up to date than droppableNode
 			if (shouldApply) {
 				gtidBelowFunc(node, droppableNode);
 			}
-			return {accept: "ok", type: gtidBelowFunc.name + " " + droppableTitle};
+			return {accept: "ok", type: gtidOperationName + " " + droppableTitle};
 		}
 		// TODO: the general case, where there's no clear family connection, meaning we cannot infer
 		// which instance is more up to date. It's under the user's responsibility!
 		if (shouldApply) {
 			gtidBelowFunc(node, droppableNode);
 		}
-		return {accept: "warning", type: gtidBelowFunc.name + " " + droppableTitle};
+		return {accept: "warning", type: gtidOperationName + " " + droppableTitle};
 	}
 	if (moveInstanceMethod == "classic") {
 		// Not pseudo-GTID mode, non GTID mode
@@ -555,9 +574,17 @@ function moveChildren(node, droppableNode, shouldApply) {
 		return {accept: "warning", type: "relocate < " + droppableTitle};
 	}
 
+	var gtidBelowFunc = null;
+	var gtidOperationName = "";
 	if (moveInstanceMethod == "pseudo-gtid") {
-		var gtidBelowFunc = matchSlaves
-		//~~~TODO: when GTID is fully supported: gtidBelowFunc = moveBelow
+		gtidBelowFunc = matchSlaves;
+		gtidOperationName = "match";
+	}
+	if (moveInstanceMethod == "gtid") {
+		gtidBelowFunc = moveSlavesGTID;
+		gtidOperationName = "move:gtid";
+	}
+	if (gtidBelowFunc != null) {
 		// Moving via GTID or Pseudo GTID
 		if (droppableNode.hasConnectivityProblem || droppableNode.isAggregate) {
 			// Obviously can't handle.
@@ -571,7 +598,7 @@ function moveChildren(node, droppableNode, shouldApply) {
 			if (shouldApply) {
 				gtidBelowFunc(node, droppableNode);
 			}
-			return {accept: "ok", type: gtidBelowFunc.name + " < " + droppableTitle};
+			return {accept: "ok", type: gtidOperationName + " < " + droppableTitle};
 		}
 		if (instanceIsDescendant(droppableNode, node) && node.children.length <= 1) {
 			// Can generally move slaves onto one of them, but there needs to be at least two slaves...
@@ -584,14 +611,14 @@ function moveChildren(node, droppableNode, shouldApply) {
 			if (shouldApply) {
 				gtidBelowFunc(node, droppableNode);
 			}
-			return {accept: "ok", type: gtidBelowFunc.name + " < " + droppableTitle};
+			return {accept: "ok", type: gtidOperationName + " < " + droppableTitle};
 		}
 		// TODO: the general case, where there's no clear family connection, meaning we cannot infer
 		// which instance is more up to date. It's under the user's responsibility!
 		if (shouldApply) {
 			gtidBelowFunc(node, droppableNode);
 		}
-		return {accept: "warning", type: gtidBelowFunc.name + " < " + droppableTitle};
+		return {accept: "warning", type: gtidOperationName + " < " + droppableTitle};
 	}
 	if (moveInstanceMethod == "classic") {
 		// Not pseudo-GTID mode, non GTID mode
@@ -744,6 +771,26 @@ function matchBelow(node, otherNode) {
 		otherNode.Key.Hostname + ":" + otherNode.Key.Port +
 		"</strong></code>?";
 	var apiUrl = "/api/match-below/" + node.Key.Hostname + "/" + node.Key.Port + "/" + otherNode.Key.Hostname + "/" + otherNode.Key.Port;
+	return executeMoveOperation(message, apiUrl);
+}
+
+function moveBelowGTID(node, otherNode) {
+	var message = "<h4>GTID MODE, move-below</h4>Are you sure you wish to turn <code><strong>" + 
+		node.Key.Hostname + ":" + node.Key.Port +
+		"</strong></code> into a slave of <code><strong>" +
+		otherNode.Key.Hostname + ":" + otherNode.Key.Port +
+		"</strong></code>?";
+	var apiUrl = "/api/move-below-gtid/" + node.Key.Hostname + "/" + node.Key.Port + "/" + otherNode.Key.Hostname + "/" + otherNode.Key.Port;
+	return executeMoveOperation(message, apiUrl);
+}
+
+function moveSlavesGTID(node, otherNode) {
+	var message = "<h4>GTID MODE, move-slaves</h4>Are you sure you wish to move slaves of <code><strong>" + 
+		node.Key.Hostname + ":" + node.Key.Port +
+		"</strong></code> below <code><strong>" +
+		otherNode.Key.Hostname + ":" + otherNode.Key.Port +
+		"</strong></code>?";
+	var apiUrl = "/api/move-slaves-gtid/" + node.Key.Hostname + "/" + node.Key.Port + "/" + otherNode.Key.Hostname + "/" + otherNode.Key.Port;
 	return executeMoveOperation(message, apiUrl);
 }
 
@@ -927,7 +974,7 @@ function analyzeClusterInstances(nodesMap) {
     });
 }
 
-function postVisualizeInstances(nodesMap) {
+function preVisualizeInstances(nodesMap) {
     // DC colors
     var knownDCs = [];
     instances.forEach(function (instance) {
@@ -942,20 +989,18 @@ function postVisualizeInstances(nodesMap) {
     for (i = 0 ; i < knownDCs.length ; ++i) {
         dcColorsMap[knownDCs[i]] = renderColors[i % renderColors.length];
     }
-    instances.forEach(function (instance) {
-    	$(".popover.instance[data-nodeid="+instance.id+"]").attr("data-dc-color", dcColorsMap[instance.DataCenter]);
-    	$(".instance-trailer[data-nodeid="+instance.id+"]").attr("data-dc-color", dcColorsMap[instance.DataCenter]);
-    });
 }
 
 
 function refreshClusterOperationModeButton() {
 	if (moveInstanceMethod == "smart") {
-		$("#move-instance-method-button").removeClass("btn-success").removeClass("btn-warning").addClass("btn-info");
+		$("#move-instance-method-button").removeClass("btn-success").removeClass("btn-primary").removeClass("btn-warning").addClass("btn-info");
 	} else if (moveInstanceMethod == "classic") {
-		$("#move-instance-method-button").removeClass("btn-info").removeClass("btn-warning").addClass("btn-success");
+		$("#move-instance-method-button").removeClass("btn-info").removeClass("btn-primary").removeClass("btn-warning").addClass("btn-success");
+	} else if (moveInstanceMethod == "gtid") {
+		$("#move-instance-method-button").removeClass("btn-success").removeClass("btn-info").removeClass("btn-warning").addClass("btn-primary");
 	} else if (moveInstanceMethod == "pseudo-gtid") {
-		$("#move-instance-method-button").removeClass("btn-success").removeClass("btn-info").addClass("btn-warning");
+		$("#move-instance-method-button").removeClass("btn-success").removeClass("btn-primary").removeClass("btn-info").addClass("btn-warning");
 	} 
 	$("#move-instance-method-button").html(moveInstanceMethod + ' mode <span class="caret"></span>')
 }
@@ -1044,16 +1089,6 @@ function anonymize() {
          });
     }();
 	$("#cluster_container div.floating_background").html("");	
-}
-
-function colorize_dc() {
-    $(".popover[data-dc-color]").each(function () {
-        $(this).css("border-color", $(this).attr("data-dc-color"));
-        $(this).css("border-width", 2);
-    });	
-    $(".popover.instance-trailer[data-dc-color]").each(function () {
-   		$(this).css("height", getInstanceDiv($(this).attr("data-nodeid")).outerHeight(true));
-    });	
 }
 
 function addSidebarInfoPopoverContent(content, prepend) {
@@ -1221,15 +1256,12 @@ $(document).ready(function () {
         	    	instancesMap = compactInstances(instances, instancesMap);
         	    }
                 analyzeClusterInstances(instancesMap);
+                preVisualizeInstances(instancesMap);
                 visualizeInstances(instancesMap, generateInstanceDiv);
                 prepareDraggable(instancesMap);
                 reviewReplicationAnalysis(replicationAnalysis, instancesMap);
-                postVisualizeInstances(instancesMap);
                 if ($.cookie("anonymize") == "true") {
                 	anonymize();
-                }
-                if ($.cookie("colorize-dc") == "true") {
-                	colorize_dc();
                 }
                 
                 instances.forEach(function (instance) {
@@ -1347,12 +1379,11 @@ $(document).ready(function () {
     $("body").on("click", "a[data-command=colorize-dc]", function(event) {
     	if ($.cookie("colorize-dc") == "true") {
     		$.cookie("colorize-dc", "false", { path: '/', expires: 1 });
-    		location.reload();
-    		return;
+        } else {
+        	$.cookie("colorize-dc", "true", { path: '/', expires: 1 });
         }
-    	colorize_dc();
-    	$("#dropdown-context a[data-command=colorize-dc]").prepend('<span class="glyphicon glyphicon-ok small"></span> ');
-    	$.cookie("colorize-dc", "true", { path: '/', expires: 1 });
+		location.reload();
+		return;
     });    
 
     $("[data-toggle=popover]").popover();

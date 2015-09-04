@@ -512,7 +512,7 @@ func Cli(command string, strict bool, instance string, destination string, owner
 			if destinationKey == nil {
 				log.Fatal("Cannot deduce destination:", destination)
 			}
-			slaves, err, errs := inst.RelocateSlaves(instanceKey, destinationKey, pattern)
+			slaves, _, err, errs := inst.RelocateSlaves(instanceKey, destinationKey, pattern)
 			if err != nil {
 				log.Fatale(err)
 			} else {
@@ -589,6 +589,46 @@ func Cli(command string, strict bool, instance string, destination string, owner
 				log.Fatale(err)
 			}
 			fmt.Println(fmt.Sprintf("%s<%s", instanceKey.DisplayString(), destinationKey.DisplayString()))
+		}
+	case cliCommand("move-gtid"):
+		{
+			if instanceKey == nil {
+				instanceKey = thisInstanceKey
+			}
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			if destinationKey == nil {
+				log.Fatal("Cannot deduce sibling:", destination)
+			}
+			_, err := inst.MoveBelowGTID(instanceKey, destinationKey)
+			if err != nil {
+				log.Fatale(err)
+			}
+			fmt.Println(fmt.Sprintf("%s<%s", instanceKey.DisplayString(), destinationKey.DisplayString()))
+		}
+	case cliCommand("move-slaves-gtid"):
+		{
+			if instanceKey == nil {
+				instanceKey = thisInstanceKey
+			}
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+			if destinationKey == nil {
+				log.Fatal("Cannot deduce destination:", destination)
+			}
+			movedSlaves, _, err, errs := inst.MoveSlavesGTID(instanceKey, destinationKey, pattern)
+			if err != nil {
+				log.Fatale(err)
+			} else {
+				for _, e := range errs {
+					log.Errore(e)
+				}
+				for _, slave := range movedSlaves {
+					fmt.Println(slave.Key.DisplayString())
+				}
+			}
 		}
 	case cliCommand("repoint"):
 		{
@@ -772,6 +812,22 @@ func Cli(command string, strict bool, instance string, destination string, owner
 			}
 			fmt.Println(fmt.Sprintf("%s lost: %d, trivial: %d, pseudo-gtid: %d",
 				promotedSlave.Key.DisplayString(), len(lostSlaves), len(equalSlaves), len(aheadSlaves)))
+			if err != nil {
+				log.Fatale(err)
+			}
+		}
+	case cliCommand("regroup-slaves-gtid"):
+		{
+			if instanceKey == nil {
+				log.Fatal("Cannot deduce instance:", instance)
+			}
+
+			lostSlaves, movedSlaves, promotedSlave, err := inst.RegroupSlavesGTID(instanceKey, false, func(candidateSlave *inst.Instance) { fmt.Println(candidateSlave.Key.DisplayString()) })
+			if promotedSlave == nil {
+				log.Fatalf("Could not regroup slaves of %+v; error: %+v", *instanceKey, err)
+			}
+			fmt.Println(fmt.Sprintf("%s lost: %d, moved: %d",
+				promotedSlave.Key.DisplayString(), len(lostSlaves), len(movedSlaves)))
 			if err != nil {
 				log.Fatale(err)
 			}

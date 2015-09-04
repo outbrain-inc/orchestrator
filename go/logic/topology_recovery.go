@@ -40,6 +40,14 @@ type TopologyRecovery struct {
 	ProcessingNodeToken    string
 }
 
+type MasterRecoveryType string
+
+const (
+	MasterRecoveryGTID         MasterRecoveryType = "MasterRecoveryGTID"
+	MasterRecoveryPseudoGTID                      = "MasterRecoveryPseudoGTID"
+	MasterRecoveryBinlogServer                    = "MasterRecoveryBinlogServer"
+)
+
 var emergencyReadTopologyInstanceMap = cache.New(time.Duration(config.Config.DiscoveryPollSeconds)*time.Second, time.Duration(config.Config.DiscoveryPollSeconds)*time.Second)
 
 // InstancesByCountSlaves sorts instances by umber of slaves, descending
@@ -101,7 +109,7 @@ func executeProcesses(processes []string, description string, analysisEntry inst
 	return err
 }
 
-func RecoverDeadMaster(analysisEntry inst.ReplicationAnalysis, skipProcesses bool) (bool, *inst.Instance, error) {
+func RecoverDeadMaster(analysisEntry inst.ReplicationAnalysis, skipProcesses bool) (success bool, promotedSlave *inst.Instance, err error) {
 	failedInstanceKey := &analysisEntry.AnalyzedInstanceKey
 	if ok, err := AttemptRecoveryRegistration(&analysisEntry); !ok {
 		log.Debugf("topology_recovery: found an active or recent recovery on %+v. Will not issue another RecoverDeadMaster.", *failedInstanceKey)
@@ -116,14 +124,31 @@ func RecoverDeadMaster(analysisEntry inst.ReplicationAnalysis, skipProcesses boo
 	}
 
 	log.Debugf("topology_recovery: RecoverDeadMaster: will recover %+v", *failedInstanceKey)
-	_, _, _, candidateSlave, err := inst.RegroupSlavesIncludingSubSlavesOfBinlogServers(failedInstanceKey, true, nil)
 
-	ResolveRecovery(failedInstanceKey, &candidateSlave.Key)
+	var masterRecoveryType MasterRecoveryType = MasterRecoveryPseudoGTID
+	if (analysisEntry.OracleGTIDImmediateTopology || analysisEntry.MariaDBGTIDImmediateTopology) && !analysisEntry.PseudoGTIDImmediateTopology {
+		masterRecoveryType = MasterRecoveryGTID
+	} else if analysisEntry.BinlogServerImmediateTopology {
+		masterRecoveryType = MasterRecoveryBinlogServer
+	}
+	log.Debugf("topology_recovery: RecoverDeadMaster: masterRecoveryType=%+v", masterRecoveryType)
+	switch masterRecoveryType {
+	case MasterRecoveryGTID:
+		{
+			_, _, promotedSlave, err = inst.RegroupSlavesGTID(failedInstanceKey, true, nil)
+		}
+	case MasterRecoveryPseudoGTID:
+		{
+			_, _, _, promotedSlave, err = inst.RegroupSlavesIncludingSubSlavesOfBinlogServers(failedInstanceKey, true, nil)
+		}
+	}
 
-	log.Debugf("topology_recovery: - RecoverDeadMaster: candidate slave is %+v", candidateSlave.Key)
-	inst.AuditOperation("recover-dead-master", failedInstanceKey, fmt.Sprintf("master: %+v", candidateSlave.Key))
+	ResolveRecovery(failedInstanceKey, &promotedSlave.Key)
 
-	return true, candidateSlave, err
+	log.Debugf("topology_recovery: - RecoverDeadMaster: candidate slave is %+v", promotedSlave.Key)
+	inst.AuditOperation("recover-dead-master", failedInstanceKey, fmt.Sprintf("master: %+v", promotedSlave.Key))
+
+	return true, promotedSlave, err
 }
 
 // replacePromotedSlaveWithCandidate is called after an intermediate master has died and been replaced by some promotedSlave.
@@ -367,53 +392,58 @@ func RecoverDeadIntermediateMaster(analysisEntry inst.ReplicationAnalysis, skipP
 	// Plan A: find a replacement intermediate master in same Data Center
 	candidateSiblingOfIntermediateMaster, err := GetCandidateSiblingOfIntermediateMaster(intermediateMasterInstance)
 
-	multiMatchSlavesToCandidateSibling := func() {
+	relocateSlavesToCandidateSibling := func() {
 		if candidateSiblingOfIntermediateMaster == nil {
 			return
 		}
 		log.Debugf("topology_recovery: - RecoverDeadIntermediateMaster: will attempt a candidate intermediate master: %+v", candidateSiblingOfIntermediateMaster.Key)
 		// We have a candidate
-		if matchedSlaves, candidateSibling, err, errs := inst.MultiMatchSlaves(failedInstanceKey, &candidateSiblingOfIntermediateMaster.Key, ""); err == nil {
+		if relocatedSlaves, candidateSibling, err, errs := inst.RelocateSlaves(failedInstanceKey, &candidateSiblingOfIntermediateMaster.Key, ""); err == nil {
 			ResolveRecovery(failedInstanceKey, &candidateSibling.Key)
 
 			successorInstance = candidateSibling
 			actionTaken = true
 
 			log.Debugf("topology_recovery: - RecoverDeadIntermediateMaster: move to candidate intermediate master (%+v) went with %d errors", candidateSibling.Key, len(errs))
-			inst.AuditOperation("recover-dead-intermediate-master", failedInstanceKey, fmt.Sprintf("Done. Matched %d slaves under candidate sibling: %+v; %d errors: %+v", len(matchedSlaves), candidateSibling.Key, len(errs), errs))
+			inst.AuditOperation("recover-dead-intermediate-master", failedInstanceKey, fmt.Sprintf("Done. Relocated %d slaves under candidate sibling: %+v; %d errors: %+v", len(relocatedSlaves), candidateSibling.Key, len(errs), errs))
 		} else {
 			log.Debugf("topology_recovery: - RecoverDeadIntermediateMaster: move to candidate intermediate master (%+v) did not complete: %+v", candidateSibling.Key, err)
-			inst.AuditOperation("recover-dead-intermediate-master", failedInstanceKey, fmt.Sprintf("Matched %d slaves under candidate sibling: %+v; %d errors: %+v", len(matchedSlaves), candidateSibling.Key, len(errs), errs))
+			inst.AuditOperation("recover-dead-intermediate-master", failedInstanceKey, fmt.Sprintf("Relocated %d slaves under candidate sibling: %+v; %d errors: %+v", len(relocatedSlaves), candidateSibling.Key, len(errs), errs))
 		}
 	}
 	if candidateSiblingOfIntermediateMaster != nil && candidateSiblingOfIntermediateMaster.DataCenter == intermediateMasterInstance.DataCenter {
-		multiMatchSlavesToCandidateSibling()
+		relocateSlavesToCandidateSibling()
 	}
 	if !actionTaken {
+		log.Debugf("topology_recovery: - RecoverDeadIntermediateMaster: will next attempt regrouping of slaves")
 		// Plan B: regroup (we wish to reduce cross-DC replication streams)
-		inst.RegroupSlaves(failedInstanceKey, true, nil)
+		_, _, _, _, err = inst.RegroupSlaves(failedInstanceKey, true, nil)
+		if err != nil {
+			log.Debugf("topology_recovery: - RecoverDeadIntermediateMaster: regroup failed on: %+v", err)
+		}
 		// Plan C: try replacement intermediate master in other DC...
 		if candidateSiblingOfIntermediateMaster != nil && candidateSiblingOfIntermediateMaster.DataCenter != intermediateMasterInstance.DataCenter {
-			multiMatchSlavesToCandidateSibling()
+			log.Debugf("topology_recovery: - RecoverDeadIntermediateMaster: will next attempt relocating to another DC server")
+			relocateSlavesToCandidateSibling()
 		}
 	}
 	if !actionTaken {
-		// Do we still have leftovers? Soem slaves couldn't move? Couldn't regroup? Only left with regrou's resulting leader?
+		// Do we still have leftovers? Some slaves couldn't move? Couldn't regroup? Only left with regroup's resulting leader?
 		// nothing moved?
-		// We don't care much if regroup made it or not. We prefer that it made it, in whcih case we only need to match up
+		// We don't care much if regroup made it or not. We prefer that it made it, in whcih case we only need to relocate up
 		// one slave, but the operation is still valid if regroup partially/completely failed. We just promote anything
 		// not regrouped.
 		// So, match up all that's left, plan D
-		log.Debugf("topology_recovery: - RecoverDeadIntermediateMaster: will next attempt a match up from %+v", *failedInstanceKey)
+		log.Debugf("topology_recovery: - RecoverDeadIntermediateMaster: will next attempt to relocate up from %+v", *failedInstanceKey)
 
 		var errs []error
-		var matchedSlaves [](*inst.Instance)
-		matchedSlaves, successorInstance, err, errs = inst.MatchUpSlaves(failedInstanceKey, "")
+		var relocatedSlaves [](*inst.Instance)
+		relocatedSlaves, successorInstance, err, errs = inst.RelocateSlaves(failedInstanceKey, &analysisEntry.AnalyzedInstanceMasterKey, "")
 
-		if len(matchedSlaves) > 0 {
+		if len(relocatedSlaves) > 0 {
 			actionTaken = true
-			log.Debugf("topology_recovery: - RecoverDeadIntermediateMaster: matched up to %+v", successorInstance.Key)
-			inst.AuditOperation("recover-dead-intermediate-master", failedInstanceKey, fmt.Sprintf("Done. Matched slaves under: %+v %d errors: %+v", successorInstance.Key, len(errs), errs))
+			log.Debugf("topology_recovery: - RecoverDeadIntermediateMaster: relocated up to %+v", successorInstance.Key)
+			inst.AuditOperation("recover-dead-intermediate-master", failedInstanceKey, fmt.Sprintf("Done. Relocated slaves under: %+v %d errors: %+v", successorInstance.Key, len(errs), errs))
 		} else {
 			err = log.Errorf("topology_recovery: RecoverDeadIntermediateMaster failed to match up any slave from %+v", *failedInstanceKey)
 		}

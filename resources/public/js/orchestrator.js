@@ -205,6 +205,7 @@ function openNodeModal(node) {
 		return false;
 	}
 	nodeModalVisible = true;
+    var hiddenZone = $('#node_modal .hidden-zone');
     $('#node_modal #modalDataAttributesTable button[data-btn][data-grouped!=true]').appendTo("#node_modal .modal-footer");
     $('#node_modal #modalDataAttributesTable [data-btn-group]').appendTo("#node_modal .modal-footer");
     $('#node_modal .modal-title').html(node.title);
@@ -213,6 +214,7 @@ function openNodeModal(node) {
     if (node.UnresolvedHostname) {
     	addNodeModalDataAttribute("Unresolved hostname", node.UnresolvedHostname);
     }
+    $('#node_modal [data-btn-group=move-equivalent]').appendTo(hiddenZone);
     if (node.MasterKey.Hostname) {
         var td = addNodeModalDataAttribute("Master", node.masterTitle);
         $('#node_modal button[data-btn=reset-slave]').appendTo(td.find("div"))
@@ -231,9 +233,7 @@ function openNodeModal(node) {
         addNodeModalDataAttribute("Replication lag", node.SlaveLagSeconds.Valid ? node.SlaveLagSeconds.Int64 : "null");
         addNodeModalDataAttribute("SQL delay", node.SQLDelay);
 
-        $('#node_modal [data-btn-group=move-equivalent]').hide();
-        var td = addNodeModalDataAttribute("Master coordinates", node.ExecBinlogCoordinates.LogFile+":"+node.ExecBinlogCoordinates.LogPos);
-        $('#node_modal [data-btn-group=move-equivalent]').appendTo(td.find("div"))
+        var masterCoordinatesEl = addNodeModalDataAttribute("Master coordinates", node.ExecBinlogCoordinates.LogFile+":"+node.ExecBinlogCoordinates.LogPos);
         $('#node_modal [data-btn-group=move-equivalent] ul').empty();
 		$.get("/api/master-equivalent/"+node.MasterKey.Hostname+"/"+node.MasterKey.Port+"/"+node.ExecBinlogCoordinates.LogFile+"/"+node.ExecBinlogCoordinates.LogPos, function(equivalenceResult) {
 			if (!equivalenceResult.Details) {
@@ -249,11 +249,16 @@ function openNodeModal(node) {
 		    });
 
 			if ($('#node_modal [data-btn-group=move-equivalent] ul li').length) {
-				$('#node_modal [data-btn-group=move-equivalent]').show();
+		        $('#node_modal [data-btn-group=move-equivalent]').appendTo(masterCoordinatesEl.find("div"));
 			}
 		}, "json");
+    } else {
+        $('#node_modal button[data-btn=reset-slave]').appendTo(hiddenZone);
+        $('#node_modal button[data-btn=skip-query]').appendTo(hiddenZone);
     }
-    addNodeModalDataAttribute("Self coordinates", node.SelfBinlogCoordinates.LogFile+":"+node.SelfBinlogCoordinates.LogPos);
+    if (node.LogBinEnabled) {
+    	addNodeModalDataAttribute("Self coordinates", node.SelfBinlogCoordinates.LogFile+":"+node.SelfBinlogCoordinates.LogPos);
+    }
     var td = addNodeModalDataAttribute("Num slaves", node.SlaveHosts.length);
     $('#node_modal button[data-btn=move-up-slaves]').appendTo(td.find("div"))
     $('#node_modal button[data-btn=match-up-slaves]').appendTo(td.find("div"))
@@ -264,10 +269,12 @@ function openNodeModal(node) {
     $('#node_modal button[data-btn=set-read-only]').appendTo(td.find("div"))
     $('#node_modal button[data-btn=set-writeable]').appendTo(td.find("div"))
 
-    addNodeModalDataAttribute("Binlog format", node.Binlog_format);
     addNodeModalDataAttribute("Has binary logs", booleanString(node.LogBinEnabled));
-    var td = addNodeModalDataAttribute("Logs slave updates", booleanString(node.LogSlaveUpdatesEnabled));
-    $('#node_modal button[data-btn=enslave-siblings]').appendTo(td.find("div"))
+    if (node.LogBinEnabled) {
+    	addNodeModalDataAttribute("Binlog format", node.Binlog_format);
+        var td = addNodeModalDataAttribute("Logs slave updates", booleanString(node.LogSlaveUpdatesEnabled));
+        $('#node_modal button[data-btn=enslave-siblings]').appendTo(td.find("div"))
+    }
 
     var td = addNodeModalDataAttribute("GTID", booleanString(node.usingGTID));
     $('#node_modal button[data-btn=enable-gtid]').appendTo(td.find("div"))
@@ -680,10 +687,10 @@ function renderInstanceElement(popoverElement, instance, renderType) {
 	    	popoverElement.find("h3 div.pull-right").prepend('<span class="glyphicon glyphicon-heart" title="Candidate"></span> ');
 	    } 
 	    if (instance.inMaintenanceProblem()) {
-	    	popoverElement.find("h3 div.pull-right").prepend('<span class="glyphicon glyphicon-wrench"></span> ');
+	    	popoverElement.find("h3 div.pull-right").prepend('<span class="glyphicon glyphicon-wrench" title="In maintenance"></span> ');
 	    } 
 	    if (instance.IsDowntimed) {
-	    	popoverElement.find("h3 div.pull-right").prepend('<span class="glyphicon glyphicon-volume-off"></span> ');
+	    	popoverElement.find("h3 div.pull-right").prepend('<span class="glyphicon glyphicon-volume-off" title="Downtimed"></span> ');
 	    } 
 	
 	    if (instance.lastCheckInvalidProblem()) {

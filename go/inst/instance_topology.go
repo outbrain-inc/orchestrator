@@ -519,8 +519,8 @@ func canMoveViaGTID(instance, otherInstance *Instance) (isOracleGTID bool, isMar
 	return isOracleGTID, isMariaDBGTID, isOracleGTID || isMariaDBGTID
 }
 
-// MoveBelowViaGTID will attempt moving instance indicated by instanceKey below another instance using either Oracle GTID or MariaDB GTID.
-func MoveBelowViaGTID(instance, otherInstance *Instance) (*Instance, error) {
+// moveInstanceBelowViaGTID will attempt moving given instance below another instance using either Oracle GTID or MariaDB GTID.
+func moveInstanceBelowViaGTID(instance, otherInstance *Instance) (*Instance, error) {
 	_, _, canMove := canMoveViaGTID(instance, otherInstance)
 
 	instanceKey := &instance.Key
@@ -568,9 +568,22 @@ Cleanup:
 	return instance, err
 }
 
-// MoveSlavesViaGTID moves a list of slaves under another instance via GTID, returning those slaves
+// MoveBelowGTID will attempt moving instance indicated by instanceKey below another instance using either Oracle GTID or MariaDB GTID.
+func MoveBelowGTID(instanceKey, otherKey *InstanceKey) (*Instance, error) {
+	instance, err := ReadTopologyInstance(instanceKey)
+	if err != nil {
+		return instance, err
+	}
+	other, err := ReadTopologyInstance(otherKey)
+	if err != nil {
+		return instance, err
+	}
+	return moveInstanceBelowViaGTID(instance, other)
+}
+
+// moveSlavesViaGTID moves a list of slaves under another instance via GTID, returning those slaves
 // that could not be moved (do not use GTID)
-func MoveSlavesViaGTID(slaves [](*Instance), other *Instance) (movedSlaves [](*Instance), unmovedSlaves [](*Instance), err error, errs []error) {
+func moveSlavesViaGTID(slaves [](*Instance), other *Instance) (movedSlaves [](*Instance), unmovedSlaves [](*Instance), err error, errs []error) {
 	slaves = removeInstance(slaves, &other.Key)
 	if len(slaves) == 0 {
 		// Nothing to do
@@ -590,7 +603,7 @@ func MoveSlavesViaGTID(slaves [](*Instance), other *Instance) (movedSlaves [](*I
 			ExecuteOnTopology(func() {
 				var slaveErr error
 				if _, _, canMove := canMoveViaGTID(slave, other); canMove {
-					slave, slaveErr = MoveBelowViaGTID(slave, other)
+					slave, slaveErr = moveInstanceBelowViaGTID(slave, other)
 				} else {
 					slaveErr = fmt.Errorf("%+v cannot move below %+v via GTID", slave.Key, other.Key)
 				}
@@ -616,6 +629,29 @@ func MoveSlavesViaGTID(slaves [](*Instance), other *Instance) (movedSlaves [](*I
 		return movedSlaves, unmovedSlaves, log.Error("Error on all operations"), errs
 	}
 	AuditOperation("move-slaves-gtid", &other.Key, fmt.Sprintf("moved %d/%d slaves below %+v via GTID", len(movedSlaves), len(slaves), other.Key))
+
+	return movedSlaves, unmovedSlaves, err, errs
+}
+
+// MoveSlavesGTID will (attempt to) move all slaves of given master below given instance.
+func MoveSlavesGTID(masterKey *InstanceKey, belowKey *InstanceKey, pattern string) (movedSlaves [](*Instance), unmovedSlaves [](*Instance), err error, errs []error) {
+	belowInstance, err := ReadTopologyInstance(belowKey)
+	if err != nil {
+		// Can't access "below" ==> can't move slaves beneath it
+		return movedSlaves, unmovedSlaves, err, errs
+	}
+
+	// slaves involved
+	slaves, err := ReadSlaveInstancesIncludingBinlogServerSubSlaves(masterKey)
+	if err != nil {
+		return movedSlaves, unmovedSlaves, err, errs
+	}
+	slaves = filterInstancesByPattern(slaves, pattern)
+	movedSlaves, unmovedSlaves, err, errs = moveSlavesViaGTID(slaves, belowInstance)
+
+	if len(unmovedSlaves) > 0 {
+		err = fmt.Errorf("MoveSlavesGTID: only moved %d out of %d slaves of %+v; error is: %+v", len(movedSlaves), len(slaves), *masterKey, err)
+	}
 
 	return movedSlaves, unmovedSlaves, err, errs
 }
@@ -1040,6 +1076,9 @@ func MatchBelow(instanceKey, otherKey *InstanceKey, requireInstanceMaintenance b
 	if err != nil {
 		return instance, nil, err
 	}
+	if config.Config.PseudoGTIDPattern == "" {
+		return instance, nil, fmt.Errorf("PseudoGTIDPattern not configured; cannot use Pseudo-GTID")
+	}
 	if instanceKey.Equals(otherKey) {
 		return instance, nil, fmt.Errorf("MatchBelow: attempt to match an instance below itself %+v", *instanceKey)
 	}
@@ -1398,6 +1437,10 @@ func MultiMatchBelow(slaves [](*Instance), belowKey *InstanceKey, slavesAlreadyS
 	errs := []error{}
 	slaveMutex := make(chan bool, 1)
 
+	if config.Config.PseudoGTIDPattern == "" {
+		return res, nil, fmt.Errorf("PseudoGTIDPattern not configured; cannot use Pseudo-GTID"), errs
+	}
+
 	slaves = removeInstance(slaves, belowKey)
 	slaves = removeBinlogServerInstances(slaves)
 
@@ -1721,6 +1764,11 @@ func RegroupSlaves(masterKey *InstanceKey, returnSlaveEvenOnFailureToRegroup boo
 		}
 		return aheadSlaves, equalSlaves, laterSlaves, candidateSlave, err
 	}
+
+	if config.Config.PseudoGTIDPattern == "" {
+		return aheadSlaves, equalSlaves, laterSlaves, candidateSlave, fmt.Errorf("PseudoGTIDPattern not configured; cannot use Pseudo-GTID")
+	}
+
 	if onCandidateSlaveChosen != nil {
 		onCandidateSlaveChosen(candidateSlave)
 	}
@@ -1800,7 +1848,7 @@ func RegroupSlavesIncludingSubSlavesOfBinlogServers(masterKey *InstanceKey, retu
 					slavesBehindMostAdvancedBinlogServer = append(slavesBehindMostAdvancedBinlogServer, slave)
 				} else if isGenerallyValidAsCandidateSlave(slave) && !foundPotentialPromotedSlaveAheadOfBinlogServer {
 					// We have a slave with log-slave-updates that is *ahead* of most-up-to-date binlog server.
-					// This means all alves behind binlog servers are able to match below said slave via pseudo-gtid.
+					// This means all slaves behind binlog servers are able to match below said slave via pseudo-gtid.
 					// This keeps us on safe grounds. We don't need to make further precautionary checks or waits
 					// on binlog server slaves.
 					foundPotentialPromotedSlaveAheadOfBinlogServer = true
@@ -1829,7 +1877,7 @@ func RegroupSlavesIncludingSubSlavesOfBinlogServers(masterKey *InstanceKey, retu
 				}
 			}
 
-			// Remember all slaves involved were either direct slaves of masterKey or slaves of binlog server slves
+			// Remember all slaves involved were either direct slaves of masterKey or slaves of binlog server slaves
 			// of masterKey. It is thus safe to move everything (ie normal slaves) around. We will now repoint everything
 			// to masterKey, thus all the slaves are now aligned as siblings. We can now continue with a normal regroup.
 			log.Debugf("RegroupSlavesIncludingSubSlavesOfBinlogServers: will align up all slaves and subslaves of binlog servers of %+v ", *masterKey)
@@ -1839,12 +1887,38 @@ func RegroupSlavesIncludingSubSlavesOfBinlogServers(masterKey *InstanceKey, retu
 	return RegroupSlaves(masterKey, returnSlaveEvenOnFailureToRegroup, onCandidateSlaveChosen)
 }
 
+// RegroupSlavesGTID will choose a candidate slave of a given instance, and enslave its siblings using GTID
+func RegroupSlavesGTID(masterKey *InstanceKey, returnSlaveEvenOnFailureToRegroup bool, onCandidateSlaveChosen func(*Instance)) ([](*Instance), [](*Instance), *Instance, error) {
+	var emptySlaves [](*Instance)
+	candidateSlave, aheadSlaves, equalSlaves, laterSlaves, err := GetCandidateSlave(masterKey, true)
+	if err != nil {
+		if !returnSlaveEvenOnFailureToRegroup {
+			candidateSlave = nil
+		}
+		return emptySlaves, emptySlaves, candidateSlave, err
+	}
+
+	if onCandidateSlaveChosen != nil {
+		onCandidateSlaveChosen(candidateSlave)
+	}
+
+	slavesToMove := append(equalSlaves, laterSlaves...)
+	log.Debugf("RegroupSlavesGTID: working on %d slaves", len(slavesToMove))
+
+	movedSlaves, unmovedSlaves, err, _ := moveSlavesViaGTID(slavesToMove, candidateSlave)
+	unmovedSlaves = append(unmovedSlaves, aheadSlaves...)
+	StartSlave(&candidateSlave.Key)
+
+	log.Debugf("RegroupSlavesGTID: done")
+	return unmovedSlaves, movedSlaves, candidateSlave, err
+}
+
 // relocateBelowInternal is a protentially recursive function which chooses how to relocate an instance below another.
 // It may choose to use Pseudo-GTID, or normal binlog positions, or take advantage of binlog servers,
 // or it may combine any of the above in a multi-step operation.
 func relocateBelowInternal(instance, other *Instance) (*Instance, error) {
-	if canReplicate, err := instance.CanReplicateFrom(other); !canReplicate {
-		return instance, err
+	if canReplicate, _ := instance.CanReplicateFrom(other); !canReplicate {
+		return instance, log.Errorf("%+v cannot replicate from %+v", instance.Key, other.Key)
 	}
 	// simplest:
 	if InstanceIsMasterOf(other, instance) {
@@ -1852,8 +1926,10 @@ func relocateBelowInternal(instance, other *Instance) (*Instance, error) {
 		return Repoint(&instance.Key, &other.Key, GTIDHintNeutral)
 	}
 	// Do we have record of equivalent coordinates?
-	if movedInstance, err := MoveEquivalent(&instance.Key, &other.Key); err == nil {
-		return movedInstance, nil
+	if !instance.IsBinlogServer() {
+		if movedInstance, err := MoveEquivalent(&instance.Key, &other.Key); err == nil {
+			return movedInstance, nil
+		}
 	}
 	// Try and take advantage of binlog servers:
 	if InstancesAreSiblings(instance, other) && other.IsBinlogServer() {
@@ -1878,9 +1954,15 @@ func relocateBelowInternal(instance, other *Instance) (*Instance, error) {
 		}
 		return Repoint(&instance.Key, &other.Key, GTIDHintDeny)
 	}
+	if instance.IsBinlogServer() {
+		// Can only move within the binlog-server family tree
+		// And these have been covered just now: move up from a master binlog server, move below a binling binlog server.
+		// sure, the family can be more complex, but we keep these operations atomic
+		return nil, log.Errorf("Relocating binlog server %+v below %+v turns to be too complex; please do it manually", instance.Key, other.Key)
+	}
 	// Next, try GTID
 	if _, _, canMove := canMoveViaGTID(instance, other); canMove {
-		return MoveBelowViaGTID(instance, other)
+		return moveInstanceBelowViaGTID(instance, other)
 	}
 
 	// Next, try Pseudo-GTID
@@ -1916,11 +1998,11 @@ func relocateBelowInternal(instance, other *Instance) (*Instance, error) {
 func RelocateBelow(instanceKey, otherKey *InstanceKey) (*Instance, error) {
 	instance, found, err := ReadInstance(instanceKey)
 	if err != nil || !found {
-		return instance, err
+		return instance, log.Errorf("Error reading %+v", *instanceKey)
 	}
 	other, found, err := ReadInstance(otherKey)
 	if err != nil || !found {
-		return instance, err
+		return instance, log.Errorf("Error reading %+v", *otherKey)
 	}
 	instance, err = relocateBelowInternal(instance, other)
 	if err == nil {
@@ -1969,7 +2051,7 @@ func relocateSlavesInternal(slaves [](*Instance), instance, other *Instance) ([]
 	}
 	// GTID
 	{
-		movedSlaves, unmovedSlaves, err, errs := MoveSlavesViaGTID(slaves, other)
+		movedSlaves, unmovedSlaves, err, errs := moveSlavesViaGTID(slaves, other)
 
 		if len(movedSlaves) == len(slaves) {
 			// Moved (or tried moving) everything via GTID
@@ -1996,7 +2078,7 @@ func relocateSlavesInternal(slaves [](*Instance), instance, other *Instance) ([]
 
 	// Normal binlog file:pos
 	if InstanceIsMasterOf(other, instance) {
-		// moveUpSlaves -- but not supporint "slaves" argument at this time.
+		// moveUpSlaves -- but not supporting "slaves" argument at this time.
 	}
 
 	// Too complex
@@ -2006,31 +2088,31 @@ func relocateSlavesInternal(slaves [](*Instance), instance, other *Instance) ([]
 // RelocateSlaves will attempt moving slaves of an instance indicated by instanceKey below another instance.
 // Orchestrator will try and figure out the best way to relocate the servers. This could span normal
 // binlog-position, pseudo-gtid, repointing, binlog servers...
-func RelocateSlaves(instanceKey, otherKey *InstanceKey, pattern string) (slaves [](*Instance), err error, errs []error) {
+func RelocateSlaves(instanceKey, otherKey *InstanceKey, pattern string) (slaves [](*Instance), other *Instance, err error, errs []error) {
 
 	instance, found, err := ReadInstance(instanceKey)
 	if err != nil || !found {
-		return slaves, err, errs
+		return slaves, other, log.Errorf("Error reading %+v", *instanceKey), errs
 	}
-	other, found, err := ReadInstance(otherKey)
+	other, found, err = ReadInstance(otherKey)
 	if err != nil || !found {
-		return slaves, err, errs
+		return slaves, other, log.Errorf("Error reading %+v", *otherKey), errs
 	}
 
 	slaves, err = ReadSlaveInstances(instanceKey)
 	if err != nil {
-		return slaves, err, errs
+		return slaves, other, err, errs
 	}
 	slaves = removeInstance(slaves, otherKey)
 	slaves = filterInstancesByPattern(slaves, pattern)
 	if len(slaves) == 0 {
 		// Nothing to do
-		return slaves, nil, errs
+		return slaves, other, nil, errs
 	}
 	slaves, err, errs = relocateSlavesInternal(slaves, instance, other)
 
 	if err == nil {
 		AuditOperation("relocate-slaves", instanceKey, fmt.Sprintf("relocated %+v slaves of %+v below %+v", len(slaves), *instanceKey, *otherKey))
 	}
-	return slaves, err, errs
+	return slaves, other, err, errs
 }
