@@ -125,6 +125,7 @@ type Configuration struct {
 	PseudoGTIDPattern                          string            // Pattern to look for in binary logs that makes for a unique entry (pseudo GTID). When empty, Pseudo-GTID based refactoring is disabled.
 	PseudoGTIDMonotonicHint                    string            // subtring in Pseudo-GTID entry which indicates Pseudo-GTID entries are expected to be monotonically increasing
 	DetectPseudoGTIDQuery                      string            // Optional query which is used to authoritatively decide whether pseudo gtid is enabled on instance
+	AllowGTIDMode                              bool              // If true, GTID mode can be enabled by powerusers via the Web UI or API.  Otherwise GTID mode can not be enabled.
 	BinlogEventsChunkSize                      int               // Chunk size (X) for SHOW BINLOG|RELAYLOG EVENTS LIMIT ?,X statements. Smaller means less locking and mroe work to be done
 	BufferBinlogEvents                         bool              // Should we used buffered read on SHOW BINLOG|RELAYLOG EVENTS -- releases the database lock sooner (recommended)
 	SkipBinlogEventsContaining                 []string          // When scanning/comparing binlogs for Pseudo-GTID, skip entries containing given texts. These are NOT regular expressions (would consume too much CPU while scanning binlogs), just substrings to find.
@@ -233,6 +234,7 @@ func NewConfiguration() *Configuration {
 		PseudoGTIDPattern:                          "",
 		PseudoGTIDMonotonicHint:                    "",
 		DetectPseudoGTIDQuery:                      "",
+		AllowGTIDMode:                              true,
 		BinlogEventsChunkSize:                      10000,
 		BufferBinlogEvents:                         true,
 		SkipBinlogEventsContaining:                 []string{},

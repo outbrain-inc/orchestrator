@@ -442,7 +442,7 @@ func (this *HttpAPI) ReattachSlave(params martini.Params, r render.Render, req *
 
 // EnableGTID attempts to enable GTID on a slave
 func (this *HttpAPI) EnableGTID(params martini.Params, r render.Render, req *http.Request, user auth.User) {
-	if !isAuthorizedForAction(req, user) {
+	if !isAuthorizedForAction(req, user) || !config.Config.AllowGTIDMode {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
 	}
