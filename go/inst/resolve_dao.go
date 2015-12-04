@@ -17,11 +17,11 @@
 package inst
 
 import (
-	"github.com/outbrain/golib/log"
-	"github.com/outbrain/golib/sqlutils"
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/outbrain/golib/log"
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/outbrain/golib/sqlutils"
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/rcrowley/go-metrics"
 	"github.com/outbrain/orchestrator/go/config"
 	"github.com/outbrain/orchestrator/go/db"
-	"github.com/rcrowley/go-metrics"
 )
 
 var writeResolvedHostnameCounter = metrics.NewCounter()

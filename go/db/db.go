@@ -22,9 +22,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/go-sql-driver/mysql"
-	"github.com/outbrain/golib/log"
-	"github.com/outbrain/golib/sqlutils"
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/go-sql-driver/mysql"
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/outbrain/golib/log"
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/outbrain/golib/sqlutils"
 	"github.com/outbrain/orchestrator/go/config"
 	"github.com/outbrain/orchestrator/go/ssl"
 )

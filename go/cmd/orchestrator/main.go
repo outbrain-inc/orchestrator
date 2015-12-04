@@ -22,8 +22,8 @@ import (
 	"os"
 	"runtime"
 
-	"github.com/outbrain/golib/log"
-	"github.com/outbrain/golib/math"
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/outbrain/golib/log"
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/outbrain/golib/math"
 	"github.com/outbrain/orchestrator/go/app"
 	"github.com/outbrain/orchestrator/go/config"
 	"github.com/outbrain/orchestrator/go/inst"

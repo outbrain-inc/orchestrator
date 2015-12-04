@@ -19,10 +19,11 @@ package inst
 import (
 	"database/sql"
 	"fmt"
-	"github.com/outbrain/golib/math"
-	"github.com/outbrain/orchestrator/go/config"
 	"strconv"
 	"strings"
+
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/outbrain/golib/math"
+	"github.com/outbrain/orchestrator/go/config"
 )
 
 // Instance represents a database instance, including its current configuration & status.

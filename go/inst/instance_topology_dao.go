@@ -19,11 +19,12 @@ package inst
 import (
 	"database/sql"
 	"fmt"
-	"github.com/outbrain/golib/log"
-	"github.com/outbrain/golib/sqlutils"
+	"time"
+
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/outbrain/golib/log"
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/outbrain/golib/sqlutils"
 	"github.com/outbrain/orchestrator/go/config"
 	"github.com/outbrain/orchestrator/go/db"
-	"time"
 )
 
 // Max concurrency for bulk topology operations

@@ -8,8 +8,8 @@ import (
 	nethttp "net/http"
 	"strings"
 
-	"github.com/go-martini/martini"
-	"github.com/outbrain/golib/log"
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/go-martini/martini"
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/outbrain/golib/log"
 	"github.com/outbrain/orchestrator/go/config"
 )
 

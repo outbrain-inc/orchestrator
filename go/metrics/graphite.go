@@ -17,14 +17,15 @@
 package metrics
 
 import (
-	"github.com/cyberdelia/go-metrics-graphite"
-	"github.com/outbrain/golib/log"
-	"github.com/outbrain/orchestrator/go/config"
-	"github.com/outbrain/orchestrator/go/process"
-	"github.com/rcrowley/go-metrics"
 	"net"
 	"strings"
 	"time"
+
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/cyberdelia/go-metrics-graphite"
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/outbrain/golib/log"
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/rcrowley/go-metrics"
+	"github.com/outbrain/orchestrator/go/config"
+	"github.com/outbrain/orchestrator/go/process"
 )
 
 var graphiteCallbackTick = time.Tick(time.Minute)

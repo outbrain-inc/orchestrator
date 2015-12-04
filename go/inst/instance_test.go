@@ -17,11 +17,12 @@
 package inst
 
 import (
-	"github.com/outbrain/golib/log"
+	"testing"
+
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/outbrain/golib/log"
+	. "github.com/outbrain/orchestrator/Godeps/_workspace/src/gopkg.in/check.v1"
 	"github.com/outbrain/orchestrator/go/config"
 	"github.com/outbrain/orchestrator/go/inst"
-	. "gopkg.in/check.v1"
-	"testing"
 )
 
 func init() {

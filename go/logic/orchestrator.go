@@ -17,19 +17,20 @@
 package logic
 
 import (
-	"github.com/outbrain/golib/log"
-	"github.com/outbrain/golib/math"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/outbrain/golib/log"
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/outbrain/golib/math"
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/pmylund/go-cache"
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/rcrowley/go-metrics"
 	"github.com/outbrain/orchestrator/go/agent"
 	"github.com/outbrain/orchestrator/go/config"
 	"github.com/outbrain/orchestrator/go/inst"
 	ometrics "github.com/outbrain/orchestrator/go/metrics"
 	"github.com/outbrain/orchestrator/go/process"
-	"github.com/pmylund/go-cache"
-	"github.com/rcrowley/go-metrics"
-	"os"
-	"os/signal"
-	"syscall"
-	"time"
 )
 
 const (

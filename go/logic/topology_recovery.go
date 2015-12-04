@@ -18,16 +18,17 @@ package logic
 
 import (
 	"fmt"
-	"github.com/outbrain/golib/log"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/outbrain/golib/log"
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/pmylund/go-cache"
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/rcrowley/go-metrics"
 	"github.com/outbrain/orchestrator/go/config"
 	"github.com/outbrain/orchestrator/go/inst"
 	"github.com/outbrain/orchestrator/go/os"
 	"github.com/outbrain/orchestrator/go/process"
-	"github.com/pmylund/go-cache"
-	"github.com/rcrowley/go-metrics"
-	"sort"
-	"strings"
-	"time"
 )
 
 // BlockedTopologyRecovery represents an entry in the blocked_topology_recovery table

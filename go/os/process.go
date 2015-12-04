@@ -17,10 +17,11 @@
 package os
 
 import (
-	"github.com/outbrain/golib/log"
 	"io/ioutil"
 	"os"
 	"os/exec"
+
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/outbrain/golib/log"
 )
 
 func execCmd(commandText string, arguments ...string) (*exec.Cmd, string, error) {

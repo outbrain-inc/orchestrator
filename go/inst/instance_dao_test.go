@@ -18,14 +18,15 @@ package inst
 
 import (
 	"fmt"
+	"math/rand"
+	"testing"
+	"time"
+
+	. "github.com/outbrain/orchestrator/Godeps/_workspace/src/gopkg.in/check.v1"
 	"github.com/outbrain/orchestrator/go/config"
 	"github.com/outbrain/orchestrator/go/db"
 	"github.com/outbrain/orchestrator/go/inst"
 	"github.com/outbrain/orchestrator/go/logic"
-	. "gopkg.in/check.v1"
-	"math/rand"
-	"testing"
-	"time"
 )
 
 func Test(t *testing.T) { TestingT(t) }

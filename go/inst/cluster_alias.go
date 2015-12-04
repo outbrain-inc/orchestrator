@@ -18,9 +18,10 @@ package inst
 
 import (
 	"fmt"
-	"github.com/outbrain/orchestrator/go/config"
 	"regexp"
 	"sync"
+
+	"github.com/outbrain/orchestrator/go/config"
 )
 
 // clusterAlias maps a cluster name to an alias

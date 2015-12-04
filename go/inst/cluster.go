@@ -17,9 +17,10 @@
 package inst
 
 import (
-	"github.com/outbrain/orchestrator/go/config"
 	"regexp"
 	"strings"
+
+	"github.com/outbrain/orchestrator/go/config"
 )
 
 // ClusterInfo makes for a cluster status/info summary

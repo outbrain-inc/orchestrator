@@ -19,13 +19,14 @@ package inst
 import (
 	"errors"
 	"fmt"
-	"github.com/outbrain/golib/log"
-	"github.com/outbrain/orchestrator/go/config"
-	"github.com/pmylund/go-cache"
 	"net"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/outbrain/golib/log"
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/pmylund/go-cache"
+	"github.com/outbrain/orchestrator/go/config"
 )
 
 type HostnameResolve struct {

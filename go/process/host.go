@@ -17,8 +17,9 @@
 package process
 
 import (
-	"github.com/outbrain/golib/log"
 	"os"
+
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/outbrain/golib/log"
 )
 
 var ThisHostname string
