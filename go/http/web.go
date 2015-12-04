@@ -23,9 +23,9 @@ import (
 	"net/http/pprof"
 	"strconv"
 
-	"github.com/go-martini/martini"
-	"github.com/martini-contrib/auth"
-	"github.com/martini-contrib/render"
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/go-martini/martini"
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/martini-contrib/auth"
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/martini-contrib/render"
 
 	"github.com/outbrain/orchestrator/go/config"
 	"github.com/outbrain/orchestrator/go/inst"

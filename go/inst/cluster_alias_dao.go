@@ -18,8 +18,9 @@ package inst
 
 import (
 	"fmt"
-	"github.com/outbrain/golib/log"
-	"github.com/outbrain/golib/sqlutils"
+
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/outbrain/golib/log"
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/outbrain/golib/sqlutils"
 	"github.com/outbrain/orchestrator/go/db"
 )
 

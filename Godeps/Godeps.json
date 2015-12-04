@@ -1,0 +1,76 @@
+{
+	"ImportPath": "github.com/outbrain/orchestrator",
+	"GoVersion": "go1.5.1",
+	"Packages": [
+		"./..."
+	],
+	"Deps": [
+		{
+			"ImportPath": "github.com/codegangsta/inject",
+			"Comment": "v1.0-rc1-10-g33e0aa1",
+			"Rev": "33e0aa1cb7c019ccc3fbe049a8262a6403d30504"
+		},
+		{
+			"ImportPath": "github.com/cyberdelia/go-metrics-graphite",
+			"Rev": "b8345b7f01d571b05366d5791a034d872f1bb36f"
+		},
+		{
+			"ImportPath": "github.com/go-martini/martini",
+			"Comment": "v1.0-169-g15a4762",
+			"Rev": "15a47622d6a9b3e6a1eaca2681e4850f612471ea"
+		},
+		{
+			"ImportPath": "github.com/go-sql-driver/mysql",
+			"Comment": "v1.2-125-gd512f20",
+			"Rev": "d512f204a577a4ab037a1816604c48c9c13210be"
+		},
+		{
+			"ImportPath": "github.com/martini-contrib/auth",
+			"Rev": "fa62c19b7ae87da370242054c8beb11af31d327f"
+		},
+		{
+			"ImportPath": "github.com/martini-contrib/gzip",
+			"Rev": "6c035326b43f79aa18793d2f1db512d21253ea61"
+		},
+		{
+			"ImportPath": "github.com/martini-contrib/render",
+			"Rev": "ec18f8345a1181146728238980606fb1d6f40e8c"
+		},
+		{
+			"ImportPath": "github.com/outbrain/golib/log",
+			"Rev": "257de1ed83f12975bb294bb30d6850a91828296f"
+		},
+		{
+			"ImportPath": "github.com/outbrain/golib/math",
+			"Rev": "257de1ed83f12975bb294bb30d6850a91828296f"
+		},
+		{
+			"ImportPath": "github.com/outbrain/golib/sqlutils",
+			"Rev": "257de1ed83f12975bb294bb30d6850a91828296f"
+		},
+		{
+			"ImportPath": "github.com/outbrain/golib/util",
+			"Rev": "257de1ed83f12975bb294bb30d6850a91828296f"
+		},
+		{
+			"ImportPath": "github.com/oxtoacart/bpool",
+			"Rev": "4e1c5567d7c2dd59fa4c7c83d34c2f3528b025d6"
+		},
+		{
+			"ImportPath": "github.com/pmylund/go-cache",
+			"Rev": "93d85800f2fa6bd0a739e7bd612bfa3bc008b72d"
+		},
+		{
+			"ImportPath": "github.com/rcrowley/go-metrics",
+			"Rev": "7839c01b09d2b1d7068034e5fe6e423f6ac5be22"
+		},
+		{
+			"ImportPath": "gopkg.in/check.v1",
+			"Rev": "11d3bc7aa68e238947792f30573146a3231fc0f1"
+		},
+		{
+			"ImportPath": "gopkg.in/gcfg.v1",
+			"Rev": "a3bc0742e3bbfd16123e6cee742cadec9a3301d2"
+		}
+	]
+}

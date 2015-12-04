@@ -18,14 +18,15 @@ package inst
 
 import (
 	"fmt"
-	"github.com/outbrain/golib/log"
-	"github.com/outbrain/golib/sqlutils"
-	"github.com/outbrain/orchestrator/go/config"
-	"github.com/outbrain/orchestrator/go/db"
-	"github.com/pmylund/go-cache"
-	"github.com/rcrowley/go-metrics"
 	"regexp"
 	"time"
+
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/outbrain/golib/log"
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/outbrain/golib/sqlutils"
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/pmylund/go-cache"
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/rcrowley/go-metrics"
+	"github.com/outbrain/orchestrator/go/config"
+	"github.com/outbrain/orchestrator/go/db"
 )
 
 var analysisChangeWriteAttemptCounter = metrics.NewCounter()

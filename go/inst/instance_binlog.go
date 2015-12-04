@@ -18,10 +18,11 @@ package inst
 
 import (
 	"errors"
-	"github.com/outbrain/golib/log"
-	"github.com/outbrain/orchestrator/go/config"
 	"regexp"
 	"strings"
+
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/outbrain/golib/log"
+	"github.com/outbrain/orchestrator/go/config"
 )
 
 // Event entries may contains table IDs (can be different for same tables on different servers)

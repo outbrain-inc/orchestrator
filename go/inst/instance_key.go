@@ -18,9 +18,10 @@ package inst
 
 import (
 	"fmt"
-	"github.com/outbrain/orchestrator/go/config"
 	"strconv"
 	"strings"
+
+	"github.com/outbrain/orchestrator/go/config"
 )
 
 // InstanceKey is an instance indicator, identifued by hostname and port

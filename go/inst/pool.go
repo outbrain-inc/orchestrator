@@ -17,8 +17,9 @@
 package inst
 
 import (
-	"github.com/outbrain/golib/log"
 	"strings"
+
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/outbrain/golib/log"
 )
 
 // PoolInstancesMap lists instance keys per pool name

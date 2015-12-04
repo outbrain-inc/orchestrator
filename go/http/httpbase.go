@@ -17,10 +17,11 @@
 package http
 
 import (
-	"github.com/martini-contrib/auth"
-	"github.com/outbrain/orchestrator/go/config"
 	"net/http"
 	"strings"
+
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/martini-contrib/auth"
+	"github.com/outbrain/orchestrator/go/config"
 )
 
 func getProxyAuthUser(req *http.Request) string {

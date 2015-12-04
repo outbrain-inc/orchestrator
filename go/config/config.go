@@ -20,9 +20,9 @@ import (
 	"encoding/json"
 	"os"
 
-	"gopkg.in/gcfg.v1"
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/gopkg.in/gcfg.v1"
 
-	"github.com/outbrain/golib/log"
+	"github.com/outbrain/orchestrator/Godeps/_workspace/src/github.com/outbrain/golib/log"
 )
 
 // Configuration makes for orchestrator configuration input, which can be provided by user via JSON formatted file.
