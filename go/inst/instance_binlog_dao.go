@@ -132,7 +132,6 @@ func getLastPseudoGTIDEntryInInstance(instance *Instance, minBinlogCoordinates *
 			minBinlogCoordinates = nil
 			log.Debugf("Heuristic binlog search failed; continuing exhaustive search")
 			// And we do NOT iterate the log file: we scan same log faile again, with no heuristic
-			//return nil, "", log.Errorf("past minBinlogCoordinates (%+v); skipping iteration over rest of binary logs", *minBinlogCoordinates)
 		} else {
 			currentBinlog, err = currentBinlog.PreviousFileCoordinates()
 			if err != nil {
