@@ -772,6 +772,10 @@ func OpenOrchestrator() (*sql.DB, error) {
 		if !config.Config.SkipOrchestratorDatabaseUpdate {
 			initOrchestratorDB(db)
 		}
+		if config.Config.MySQLOrchestratorMaxPoolConnections > 0 {
+			log.Debugf("Orchestrator pool SetMaxOpenConns: %d", config.Config.MySQLOrchestratorMaxPoolConnections)
+			db.SetMaxOpenConns(config.Config.MySQLOrchestratorMaxPoolConnections)
+		}
 		db.SetMaxIdleConns(10)
 	}
 	return db, err
