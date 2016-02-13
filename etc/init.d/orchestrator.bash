@@ -23,7 +23,8 @@ case "$1" in
   start)
     printf "%-50s" "Starting $NAME..."
     cd $DAEMON_PATH
-    PID=$(./$DAEMON $DAEMONOPTS >> /var/log/${NAME}.log 2>&1 & echo $!)
+    # Ensure orchestrator's environment is clean
+    PID=$(env -i ./$DAEMON $DAEMONOPTS >> /var/log/${NAME}.log 2>&1 & echo $!)
     #echo "Saving PID" $PID " to " $PIDFILE
     if [ -z $PID ]; then
       printf "%s\n" "Fail"
@@ -57,8 +58,16 @@ case "$1" in
     cd $DAEMON_PATH
     if [ -f $PIDFILE ]; then
       kill -TERM $PID
-      printf "%s\n" "Ok"
       rm -f $PIDFILE
+      # Wait for orchestrator to stop otherwise restart may fail.
+      # (The newly restarted process may be unable to bind to the
+      # currently bound socket.)
+      while ps -p $PID >/dev/null 2>&1; do
+        printf "."
+        sleep 1
+      done
+      printf "\n"
+      printf "Ok\n"
     else
       printf "%s\n" "pidfile not found"
       exit 1
