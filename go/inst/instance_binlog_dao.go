@@ -18,15 +18,16 @@ package inst
 
 import (
 	"fmt"
+	"regexp"
+	"strings"
+	"time"
+
 	"github.com/outbrain/golib/log"
 	"github.com/outbrain/golib/math"
 	"github.com/outbrain/golib/sqlutils"
 	"github.com/outbrain/orchestrator/go/config"
 	"github.com/outbrain/orchestrator/go/db"
-	"github.com/pmylund/go-cache"
-	"regexp"
-	"strings"
-	"time"
+	"github.com/patrickmn/go-cache"
 )
 
 const maxEmptyBinlogFiles int = 10
@@ -44,6 +45,11 @@ func getInstanceBinlogEntryKey(instance *Instance, entry string) string {
 // the last relay log. We must be careful not to scan for Pseudo-GTID entries past the position executed by the SQL thread.
 // maxCoordinates == nil means no limit.
 func getLastPseudoGTIDEntryInBinlog(instanceKey *InstanceKey, binlog string, binlogType BinlogType, maxCoordinates *BinlogCoordinates) (*BinlogCoordinates, string, error) {
+	pseudoGTIDPattern, err := regexp.Compile(config.Config.PseudoGTIDPattern)
+	if err != nil {
+		return nil, "", log.Errorf("Invalid PseudoGTIDPattern: %q: %v", config.Config.PseudoGTIDPattern, err)
+	}
+
 	if binlog == "" {
 		return nil, "", log.Errorf("getLastPseudoGTIDEntryInBinlog: empty binlog file name for %+v. maxCoordinates = %+v", *instanceKey, maxCoordinates)
 	}
@@ -75,7 +81,7 @@ func getLastPseudoGTIDEntryInBinlog(instanceKey *InstanceKey, binlog string, bin
 			moreRowsExpected = true
 			nextPos = m.GetInt64("End_log_pos")
 			binlogEntryInfo := m.GetString("Info")
-			if matched, _ := regexp.MatchString(config.Config.PseudoGTIDPattern, binlogEntryInfo); matched {
+			if matched := pseudoGTIDPattern.MatchString(binlogEntryInfo); matched {
 				if maxCoordinates != nil && maxCoordinates.SmallerThan(&BinlogCoordinates{LogFile: binlog, LogPos: m.GetInt64("Pos")}) {
 					// past the limitation
 					moreRowsExpected = false
@@ -154,6 +160,11 @@ func SearchEntryInBinlog(instanceKey *InstanceKey, binlog string, entryText stri
 		return binlogCoordinates, false, log.Errorf("SearchEntryInBinlog: empty binlog file name for %+v", *instanceKey)
 	}
 
+	pseudoGTIDPattern, err := regexp.Compile(config.Config.PseudoGTIDPattern)
+	if err != nil {
+		return binlogCoordinates, false, log.Errorf("Invalid PseudoGTIDPattern: %q: %v", config.Config.PseudoGTIDPattern, err)
+	}
+
 	db, err := db.OpenTopology(instanceKey.Hostname, instanceKey.Port)
 	if err != nil {
 		return binlogCoordinates, false, err
@@ -199,7 +210,7 @@ func SearchEntryInBinlog(instanceKey *InstanceKey, binlog string, entryText stri
 				// If we find the first entry to be higher than the searched one, clearly we are done.
 				// If not, then by virtue of binary logs, we still have to full-scan the entrie binlog sequentially; we
 				// do not check again for ASCENDING (no point), so we save up CPU energy wasted in regexp.
-				if matched, _ := regexp.MatchString(config.Config.PseudoGTIDPattern, binlogEntryInfo); matched {
+				if matched := pseudoGTIDPattern.MatchString(binlogEntryInfo); matched {
 					alreadyMatchedAscendingPseudoGTID = true
 					log.Debugf("Matched ascending Pseudo-GTID entry in %+v", binlog)
 					if binlogEntryInfo > entryText {

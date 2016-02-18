@@ -36,6 +36,8 @@ const (
 	maxConcurrency = 5
 )
 
+var emptyInstanceKey = inst.InstanceKey{} // used in various places.
+
 // discoveryInstanceKeys is a channel of instanceKey-s that were requested for discovery.
 // It can be continuously updated as discovery process progresses.
 var discoveryInstanceKeys chan inst.InstanceKey = make(chan inst.InstanceKey, maxConcurrency)
@@ -140,7 +142,9 @@ func discoverInstance(instanceKey inst.InstanceKey) {
 		discoveryInstanceKeys <- slaveKey
 	}
 	// Investigate master:
-	discoveryInstanceKeys <- instance.MasterKey
+	if instance.MasterKey != emptyInstanceKey {
+		discoveryInstanceKeys <- instance.MasterKey
+	}
 }
 
 // ContinuousDiscovery starts an asynchronuous infinite discovery process where instances are
