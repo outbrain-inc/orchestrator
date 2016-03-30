@@ -737,7 +737,7 @@ Cheatsheet:
 
         begin-maintenance
             Request a maintenance lock on an instance. Topology changes require placing locks on the minimal set of
-            affected instances, so as to avoid an incident of two uncoordinated operations on a smae instance (leading
+            affected instances, so as to avoid an incident of two uncoordinated operations on a same instance (leading
             to possible chaos). Locks are placed in the backend database, and so multiple orchestrator instances are safe.
             Operations automatically acquire locks and release them. This command manually acquires a lock, and will
             block other operations on the instance until lock is released.

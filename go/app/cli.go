@@ -1132,7 +1132,7 @@ func Cli(command string, strict bool, instance string, destination string, owner
 			fmt.Println(instanceKey.DisplayString())
 		}
 		// Recovery & analysis
-	case registerCliCommand("recover", "Recovery", `Do auto-recovery given a dead instance`), registerCliCommand("recover-lite", "Recovery", `Do auto-recovery given a dead instance. Orchestrator chooses the best course of actionwithout executing external processes`):
+	case registerCliCommand("recover", "Recovery", `Do auto-recovery given a dead instance`), registerCliCommand("recover-lite", "Recovery", `Do auto-recovery given a dead instance. Orchestrator chooses the best course of action without executing external processes`):
 		{
 			instanceKey = deduceInstanceKeyIfNeeded(instance, instanceKey, true)
 			if instanceKey == nil {

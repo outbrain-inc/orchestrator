@@ -97,7 +97,7 @@ func ReadTopologyInstance(instanceKey *InstanceKey) (*Instance, error) {
 	slaveStatusFound := false
 	var resolveErr error
 
-	// Before we even begin anything, declare that we're about to cehck this instance.If anything goes wrong network-wise,
+	// Before we even begin anything, declare that we're about to check this instance. If anything goes wrong network-wise,
 	// this is our source of truth in terms of instance being inaccessible
 	_ = UpdateInstanceLastAttemptedCheck(instanceKey)
 
