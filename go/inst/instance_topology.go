@@ -849,7 +849,7 @@ func MakeCoMaster(instanceKey *InstanceKey) (*Instance, error) {
 		// However there's the problem that upon RESET SLAVE we lose the replication's user/password info.
 		// Thus, we come up with the following rule:
 		// If S replicates from M1, and M1<->M2 are co masters, we allow S to become co-master of M1 (S<->M1) if:
-		// - M1 is writeable
+		// - M1 is writable
 		// - M2 is read-only or is unreachable/invalid
 		// - S  is read-only
 		// And so we will be replacing one read-only co-master with another.
@@ -1418,7 +1418,7 @@ func RematchSlave(instanceKey *InstanceKey, requireInstanceMaintenance bool) (*I
 }
 
 // MakeMaster will take an instance, make all its siblings its slaves (via pseudo-GTID) and make it master
-// (stop its replicaiton, make writeable).
+// (stop its replicaiton, make writable).
 func MakeMaster(instanceKey *InstanceKey) (*Instance, error) {
 	instance, err := ReadTopologyInstance(instanceKey)
 	if err != nil {

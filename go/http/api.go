@@ -1139,8 +1139,8 @@ func (this *HttpAPI) SetReadOnly(params martini.Params, r render.Render, req *ht
 	r.JSON(200, &APIResponse{Code: OK, Message: "Server set as read-only", Details: instance})
 }
 
-// SetWriteable clear the global read_only variable
-func (this *HttpAPI) SetWriteable(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+// SetWritable clear the global read_only variable
+func (this *HttpAPI) SetWritable(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
@@ -1157,7 +1157,7 @@ func (this *HttpAPI) SetWriteable(params martini.Params, r render.Render, req *h
 		return
 	}
 
-	r.JSON(200, &APIResponse{Code: OK, Message: "Server set as writeable", Details: instance})
+	r.JSON(200, &APIResponse{Code: OK, Message: "Server set as writable", Details: instance})
 }
 
 // KillQuery kills a query running on a server
@@ -2246,7 +2246,7 @@ func (this *HttpAPI) RegisterRequests(m *martini.ClassicMartini) {
 
 	// Instance:
 	m.Get("/api/set-read-only/:host/:port", this.SetReadOnly)
-	m.Get("/api/set-writeable/:host/:port", this.SetWriteable)
+	m.Get("/api/set-writable/:host/:port", this.SetWritable)
 	m.Get("/api/kill-query/:host/:port/:process", this.KillQuery)
 
 	// Binary logs:

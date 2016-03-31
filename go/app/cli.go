@@ -713,7 +713,7 @@ func Cli(command string, strict bool, instance string, destination string, owner
 			}
 			fmt.Println(instanceKey.DisplayString())
 		}
-	case registerCliCommand("set-writeable", "Instance", `Turn an instance writeable, via SET GLOBAL read_only := 0`):
+	case registerCliCommand("set-writable", "Instance", `Turn an instance writable, via SET GLOBAL read_only := 0`):
 		{
 			instanceKey = deduceInstanceKeyIfNeeded(instance, instanceKey, true)
 			_, err := inst.SetReadOnly(instanceKey, false)
@@ -891,9 +891,9 @@ func Cli(command string, strict bool, instance string, destination string, owner
 				fmt.Println(strings.Join(clusters, "\n"))
 			}
 		}
-	case registerCliCommand("all-clusters-masters", "Information", `List of writeable masters, one per cluster`):
+	case registerCliCommand("all-clusters-masters", "Information", `List of writable masters, one per cluster`):
 		{
-			instances, err := inst.ReadWriteableClustersMasters()
+			instances, err := inst.ReadWritableClustersMasters()
 			if err != nil {
 				log.Fatale(err)
 			} else {
@@ -957,12 +957,12 @@ func Cli(command string, strict bool, instance string, destination string, owner
 	case registerCliCommand("which-cluster-master", "Information", `Output the name of the master in a given cluster`):
 		{
 			clusterName := getClusterName(clusterAlias, instanceKey)
-			masters, err := inst.ReadClusterWriteableMaster(clusterName)
+			masters, err := inst.ReadClusterWritableMaster(clusterName)
 			if err != nil {
 				log.Fatale(err)
 			}
 			if len(masters) == 0 {
-				log.Fatalf("No writeable masters found for cluster %+v", clusterName)
+				log.Fatalf("No writable masters found for cluster %+v", clusterName)
 			}
 			fmt.Println(masters[0].Key.DisplayString())
 		}

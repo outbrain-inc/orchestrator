@@ -1190,7 +1190,7 @@ function Cluster() {
 
   // This is legacy and will be removed
   function makeMaster(instance) {
-    var message = "Are you sure you wish to make <code><strong>" + instance.Key.Hostname + ":" + instance.Key.Port + "</strong></code> the new master?" + "<p>Siblings of <code><strong>" + instance.Key.Hostname + ":" + instance.Key.Port + "</strong></code> will turn to be its children, " + "via Pseudo-GTID." + "<p>The instance will be set to be writeable (<code><strong>read_only = 0</strong></code>)." + "<p>Replication on this instance will be stopped, but not reset. You should run <code><strong>RESET SLAVE</strong></code> yourself " + "if this instance will indeed become the master." + "<p>Pointing your application servers to the new master is on you.";
+    var message = "Are you sure you wish to make <code><strong>" + instance.Key.Hostname + ":" + instance.Key.Port + "</strong></code> the new master?" + "<p>Siblings of <code><strong>" + instance.Key.Hostname + ":" + instance.Key.Port + "</strong></code> will turn to be its children, " + "via Pseudo-GTID." + "<p>The instance will be set to be writable (<code><strong>read_only = 0</strong></code>)." + "<p>Replication on this instance will be stopped, but not reset. You should run <code><strong>RESET SLAVE</strong></code> yourself " + "if this instance will indeed become the master." + "<p>Pointing your application servers to the new master is on you.";
     var apiUrl = "/api/make-master/" + instance.Key.Hostname + "/" + instance.Key.Port;
     return executeMoveOperation(message, apiUrl);
   }

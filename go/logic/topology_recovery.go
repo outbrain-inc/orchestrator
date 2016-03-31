@@ -783,7 +783,7 @@ func RecoverDeadCoMaster(topologyRecovery *TopologyRecovery, skipProcesses bool)
 
 	mustPromoteOtherCoMaster := config.Config.CoMasterRecoveryMustPromoteOtherCoMaster
 	if !otherCoMaster.ReadOnly {
-		log.Debugf("topology_recovery: RecoverDeadCoMaster: other co-master %+v is writeable hence has to be promoted", otherCoMaster.Key)
+		log.Debugf("topology_recovery: RecoverDeadCoMaster: other co-master %+v is writable hence has to be promoted", otherCoMaster.Key)
 		mustPromoteOtherCoMaster = true
 	}
 	log.Debugf("topology_recovery: RecoverDeadCoMaster: mustPromoteOtherCoMaster? %+v", mustPromoteOtherCoMaster)
@@ -1074,7 +1074,7 @@ func ForceExecuteRecovery(clusterName string, analysisCode inst.AnalysisCode, fa
 // ForceMasterTakeover *trusts* master of given cluster is dead and fails over to designated instance,
 // which has to be its direct child.
 func ForceMasterTakeover(clusterName string, destination *inst.Instance) (topologyRecovery *TopologyRecovery, err error) {
-	clusterMasters, err := inst.ReadClusterWriteableMaster(clusterName)
+	clusterMasters, err := inst.ReadClusterWritableMaster(clusterName)
 	if err != nil {
 		return nil, fmt.Errorf("Cannot deduce cluster master for %+v", clusterName)
 	}
@@ -1110,7 +1110,7 @@ func ForceMasterTakeover(clusterName string, destination *inst.Instance) (topolo
 // This function is graceful in that it will first lock down the master, then wait
 // for the designated replica to catch up with last position.
 func GracefulMasterTakeover(clusterName string) (topologyRecovery *TopologyRecovery, promotedMasterCoordinates *inst.BinlogCoordinates, err error) {
-	clusterMasters, err := inst.ReadClusterWriteableMaster(clusterName)
+	clusterMasters, err := inst.ReadClusterWritableMaster(clusterName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("Cannot deduce cluster master for %+v", clusterName)
 	}

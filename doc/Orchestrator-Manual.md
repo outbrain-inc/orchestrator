@@ -361,10 +361,10 @@ Match a slave below another instance (we expect the other instance to be as adva
 > look up entires in the servers binary log.
 > See [Pseudo GTID](#pseudo-gtid) for more details.
 
-Make an instance read-only or writeable:
+Make an instance read-only or writable:
 
     orchestrator -c set-read-only -i 127.0.0.1:22988 cli
-    orchestrator -c set-writeable -i 127.0.0.1:22988 cli
+    orchestrator -c set-writable -i 127.0.0.1:22988 cli
 
 Begin maintenance mode on an instance. While in maintenance mode, _orchestrator_ will not allow this instance to
 be moved or participate in another instance's move:
@@ -750,12 +750,12 @@ Cheatsheet:
             orchestrator -c set-read-only
                 -i not given, implicitly assumed local hostname
 
-        set-writeable
-            Turn an instance writeable, via SET GLOBAL read_only := 0. Example:
+        set-writable
+            Turn an instance writable, via SET GLOBAL read_only := 0. Example:
 
-            orchestrator -c set-writeable -i instance.to.turn.writeable.com
+            orchestrator -c set-writable -i instance.to.turn.writable.com
 
-            orchestrator -c set-writeable
+            orchestrator -c set-writable
                 -i not given, implicitly assumed local hostname
 
     Binlog commands
@@ -1283,7 +1283,7 @@ _Orchestrator_ picks best course of action.
 * `/api/stop-slave/:host/:port`: issue a `STOP SLAVE` on an instance
 * `/api/stop-slave-nice/:host/:port`: stop a slave such that the SQL thread is aligned with IO thread
 * `/api/set-read-only/:host/:port`: issue a `SET GLOBAL read_only := 1` on an instance
-* `/api/set-writeable/:host/:port`: issue a `SET GLOBAL read_only := 0` on an instance
+* `/api/set-writable/:host/:port`: issue a `SET GLOBAL read_only := 0` on an instance
 * `/api/kill-query/:host/:port/:process`: kill a query (denoted by process id) on given instance. Synchronous call.
 * `/api/maintenance`: list instances in active maintenance mode
 * `/api/cluster/:clusterName`: list instances in a topology cluster. Each topology is automatically given a unique
