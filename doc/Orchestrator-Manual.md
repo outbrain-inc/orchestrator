@@ -8,7 +8,7 @@ _Orchestrator_ is a MySQL replication topology management and visualization tool
 
 _orchestrator_ actively crawls through your topologies and maps them. It reads basic MySQL info such as replication status and configuration.
 
-It provides with slick visualization of your topologies, including replication problems, even in the face of failures.
+It provides a slick visualization of your topologies, including replication problems, even in the face of failures.
 
 #### Refactoring
 
@@ -17,7 +17,7 @@ _orchestrator_ understands replication rules. It knows about binlog file:positio
 Refactoring replication topologies can be a matter of drag & drop a replica under another master. Moving slaves around becomes
 safe: _orchestrator_ will reject an illegal refactoring attempt.
 
-Find grained control is achieved by various command line options.
+Fine grained control is achieved by various command line options.
 
 #### Recovery
 
@@ -1470,7 +1470,7 @@ When operating in HTTP mode (API or Web), access to _orchestrator_ may be restri
         RewriteRule .* - [E=RU:%1,NS]
         RequestHeader set X-Forwarded-User %{RU}e
 
-   The `proxy` authentication allows for *roles*. Soem users are *Power users* and the rest are just normal users.
+   The `proxy` authentication allows for *roles*. Some users are *Power users* and the rest are just normal users.
    *Power users* are allowed to make changes to the topologies, whereas normal users are in read-only mode.
    To specify the list of known DBAs, use:
 
@@ -2350,7 +2350,7 @@ Downtime is explicitly created for this purpose: to allow the DBA a way to suppr
 _orchestrator_ supports hooks -- external scripts invoked through the recovery process. These are arrays of commands invoked through
 shell, in particular `bash`. Hooks are:
 
-- `OnFailureDetectionProcesses`: called when a failure/recovery known scenario is detected. These scripts are called befroe even
+- `OnFailureDetectionProcesses`: called when a failure/recovery known scenario is detected. These scripts are called before even
   deciding whether action should be taken.
 - `PreFailoverProcesses`: called after deciding to take action on a scenario. Order of execution is sequential. A failure
   (non-zero exit status) of any process *aborts the recovery operation*. This is your chance to decide whether to go on with
