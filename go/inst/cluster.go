@@ -54,9 +54,25 @@ func (this *ClusterInfo) filtersMatchCluster(filters []string) bool {
 			if matched, _ := regexp.MatchString(aliasPattern, this.ClusterAlias); matched {
 				return true
 			}
+		} else if filter == "*" {
+			return true
 		} else if matched, _ := regexp.MatchString(filter, this.ClusterName); matched && filter != "" {
 			return true
 		}
 	}
 	return false
+}
+
+// ApplyClusterAlias updates the given clusterInfo's ClusterAlias property
+func (this *ClusterInfo) ApplyClusterAlias() {
+	if this.ClusterAlias != "" && this.ClusterAlias != this.ClusterName {
+		// Already has an alias; abort
+		return
+	}
+	// Try out the hard-wired config:
+	for pattern := range config.Config.ClusterNameToAlias {
+		if matched, _ := regexp.MatchString(pattern, this.ClusterName); matched {
+			this.ClusterAlias = config.Config.ClusterNameToAlias[pattern]
+		}
+	}
 }

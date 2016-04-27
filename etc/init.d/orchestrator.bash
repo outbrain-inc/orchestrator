@@ -19,11 +19,15 @@ SCRIPTNAME=/etc/init.d/$NAME
 
 ulimit -n 16384
 
+# The file /etc/orchestrator_profile can be used to inject pre-service execution
+# scripts, such as exporting variables or whatever. It's yours!
+[ -f /etc/orchestrator_profile ] && . /etc/orchestrator_profile
+
 case "$1" in
   start)
     printf "%-50s" "Starting $NAME..."
     cd $DAEMON_PATH
-    PID=$(./$DAEMON $DAEMONOPTS > /var/log/${NAME}.log 2>&1 & echo $!)
+    PID=$(./$DAEMON $DAEMONOPTS >> /var/log/${NAME}.log 2>&1 & echo $!)
     #echo "Saving PID" $PID " to " $PIDFILE
     if [ -z $PID ]; then
       printf "%s\n" "Fail"
@@ -63,11 +67,11 @@ case "$1" in
       printf "%s\n" "pidfile not found"
       exit 1
     fi
-  ;;  
+  ;;
   restart)
     $0 stop
     $0 start
-  ;;  
+  ;;
   reload)
     PID=$(cat $PIDFILE)
     cd $DAEMON_PATH

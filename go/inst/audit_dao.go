@@ -22,9 +22,29 @@ import (
 	"github.com/outbrain/golib/sqlutils"
 	"github.com/outbrain/orchestrator/go/config"
 	"github.com/outbrain/orchestrator/go/db"
+	"github.com/rcrowley/go-metrics"
+	"log/syslog"
 	"os"
 	"time"
 )
+
+// syslogWriter is optional, and defaults to nil (disabled)
+var syslogWriter *syslog.Writer
+
+var auditOperationCounter = metrics.NewCounter()
+
+func init() {
+	metrics.Register("audit.write", auditOperationCounter)
+}
+
+// EnableSyslogWriter enables, if possible, writes to syslog. These will execute _in addition_ to normal logging
+func EnableAuditSyslog() (err error) {
+	syslogWriter, err = syslog.New(syslog.LOG_ERR, "orchestrator")
+	if err != nil {
+		syslogWriter = nil
+	}
+	return err
+}
 
 // AuditOperation creates and writes a new audit entry by given params
 func AuditOperation(auditType string, instanceKey *InstanceKey, message string) error {
@@ -32,48 +52,64 @@ func AuditOperation(auditType string, instanceKey *InstanceKey, message string) 
 	if instanceKey == nil {
 		instanceKey = &InstanceKey{}
 	}
+	clusterName := ""
+	if instanceKey.Hostname != "" {
+		clusterName, _ = GetClusterName(instanceKey)
+	}
 
 	if config.Config.AuditLogFile != "" {
-		f, err := os.OpenFile(config.Config.AuditLogFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0600)
-		if err != nil {
-			return log.Errore(err)
-		}
+		go func() error {
+			f, err := os.OpenFile(config.Config.AuditLogFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0600)
+			if err != nil {
+				return log.Errore(err)
+			}
 
-		defer f.Close()
-		text := fmt.Sprintf("%s\t%s\t%s\t%d\t%s\t\n", time.Now().Format(log.TimeFormat), auditType, instanceKey.Hostname, instanceKey.Port, message)
-		if _, err = f.WriteString(text); err != nil {
-			return log.Errore(err)
-		}
+			defer f.Close()
+			text := fmt.Sprintf("%s\t%s\t%s\t%d\t[%s]\t%s\t\n", time.Now().Format(log.TimeFormat), auditType, instanceKey.Hostname, instanceKey.Port, clusterName, message)
+			if _, err = f.WriteString(text); err != nil {
+				return log.Errore(err)
+			}
+			return nil
+		}()
 	}
-
-	db, err := db.OpenOrchestrator()
-	if err != nil {
-		return log.Errore(err)
-	}
-
-	_, err = sqlutils.Exec(db, `
+	_, err := db.ExecOrchestrator(`
 			insert 
 				into audit (
-					audit_timestamp, audit_type, hostname, port, message
+					audit_timestamp, audit_type, hostname, port, cluster_name, message
 				) VALUES (
-					NOW(), ?, ?, ?, ?
+					NOW(), ?, ?, ?, ?, ?
 				)
 			`,
 		auditType,
 		instanceKey.Hostname,
 		instanceKey.Port,
+		clusterName,
 		message,
 	)
 	if err != nil {
 		return log.Errore(err)
 	}
+	logMessage := fmt.Sprintf("auditType:%s instance:%s cluster:%s message:%s", auditType, instanceKey.DisplayString(), clusterName, message)
+	if syslogWriter != nil {
+		go func() {
+			syslogWriter.Info(logMessage)
+		}()
+	}
+	log.Debugf(logMessage)
+	auditOperationCounter.Inc(1)
 
 	return err
 }
 
 // ReadRecentAudit returns a list of audit entries order chronologically descending, using page number.
-func ReadRecentAudit(page int) ([]Audit, error) {
+func ReadRecentAudit(instanceKey *InstanceKey, page int) ([]Audit, error) {
 	res := []Audit{}
+	args := sqlutils.Args()
+	whereCondition := ``
+	if instanceKey != nil {
+		whereCondition = `where hostname=? and port=?`
+		args = append(args, instanceKey.Hostname, instanceKey.Port)
+	}
 	query := fmt.Sprintf(`
 		select 
 			audit_id,
@@ -84,17 +120,14 @@ func ReadRecentAudit(page int) ([]Audit, error) {
 			message
 		from 
 			audit
+		%s
 		order by
 			audit_timestamp desc
-		limit %d
-		offset %d
-		`, config.Config.AuditPageSize, page*config.Config.AuditPageSize)
-	db, err := db.OpenOrchestrator()
-	if err != nil {
-		goto Cleanup
-	}
-
-	err = sqlutils.QueryRowsMap(db, query, func(m sqlutils.RowMap) error {
+		limit ?
+		offset ?
+		`, whereCondition)
+	args = append(args, config.Config.AuditPageSize, page*config.Config.AuditPageSize)
+	err := db.QueryOrchestrator(query, args, func(m sqlutils.RowMap) error {
 		audit := Audit{}
 		audit.AuditId = m.GetInt64("audit_id")
 		audit.AuditTimestamp = m.GetString("audit_timestamp")
@@ -104,9 +137,8 @@ func ReadRecentAudit(page int) ([]Audit, error) {
 		audit.Message = m.GetString("message")
 
 		res = append(res, audit)
-		return err
+		return nil
 	})
-Cleanup:
 
 	if err != nil {
 		log.Errore(err)

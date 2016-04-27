@@ -18,64 +18,27 @@ package inst
 
 import (
 	"fmt"
+
 	"github.com/outbrain/golib/log"
 	"github.com/outbrain/golib/sqlutils"
 	"github.com/outbrain/orchestrator/go/db"
 )
 
-// ReadClusterAliases reads the entrie cluster name aliases mapping
-func ReadClusterAliases() error {
-	updatedMap := make(map[string]string)
-	query := fmt.Sprintf(`
-		select 
-			cluster_name,
-			alias
-		from 
-			cluster_alias
-		`)
-	db, err := db.OpenOrchestrator()
-	if err != nil {
-		goto Cleanup
-	}
-
-	err = sqlutils.QueryRowsMap(db, query, func(m sqlutils.RowMap) error {
-		updatedMap[m.GetString("cluster_name")] = m.GetString("alias")
-		return err
-	})
-Cleanup:
-
-	if err != nil {
-		log.Errore(err)
-	}
-	clusterAliasMapMutex.Lock()
-	clusterAliasMap = updatedMap
-	clusterAliasMapMutex.Unlock()
-	return err
-
-}
-
-// ReadClusterAliases reads the entrie cluster name aliases mapping
-func ReadClusterByAlias(alias string) (string, error) {
-	clusterName := ""
-	query := fmt.Sprintf(`
-		select 
+// ReadClusterNameByAlias
+func ReadClusterNameByAlias(alias string) (clusterName string, err error) {
+	query := `
+		select
 			cluster_name
-		from 
+		from
 			cluster_alias
 		where
-			alias = '%s'
-		`, alias)
-	db, err := db.OpenOrchestrator()
-	if err != nil {
-		goto Cleanup
-	}
-
-	err = sqlutils.QueryRowsMap(db, query, func(m sqlutils.RowMap) error {
+			alias = ?
+			or cluster_name = ?
+		`
+	err = db.QueryOrchestrator(query, sqlutils.Args(alias, alias), func(m sqlutils.RowMap) error {
 		clusterName = m.GetString("cluster_name")
 		return nil
 	})
-Cleanup:
-
 	if err != nil {
 		return "", err
 	}
@@ -83,30 +46,88 @@ Cleanup:
 		err = fmt.Errorf("No cluster found for alias %s", alias)
 	}
 	return clusterName, err
+}
 
+// ReadAliasByClusterName returns the cluster alias for the given cluster name,
+// or the cluster name itself if not explicit alias found
+func ReadAliasByClusterName(clusterName string) (alias string, err error) {
+	alias = clusterName // default return value
+	query := `
+		select
+			alias
+		from
+			cluster_alias
+		where
+			cluster_name = ?
+		`
+	err = db.QueryOrchestrator(query, sqlutils.Args(clusterName), func(m sqlutils.RowMap) error {
+		alias = m.GetString("alias")
+		return nil
+	})
+	return clusterName, err
 }
 
 // WriteClusterAlias will write (and override) a single cluster name mapping
 func WriteClusterAlias(clusterName string, alias string) error {
 	writeFunc := func() error {
-		db, err := db.OpenOrchestrator()
-		if err != nil {
-			return log.Errore(err)
-		}
-
-		_, err = sqlutils.Exec(db, `
-			replace into  
+		_, err := db.ExecOrchestrator(`
+			replace into
 					cluster_alias (cluster_name, alias)
 				values
 					(?, ?)
 			`,
-			clusterName,
-			alias)
-		if err != nil {
-			return log.Errore(err)
-		}
+			clusterName, alias)
+		return log.Errore(err)
+	}
+	return ExecDBWriteFunc(writeFunc)
+}
 
-		return nil
+// UpdateClusterAliases writes down the cluster_alias table based on information
+// gained from database_instance
+func UpdateClusterAliases() error {
+	writeFunc := func() error {
+		_, err := db.ExecOrchestrator(`
+			replace into
+					cluster_alias (alias, cluster_name, last_registered)
+				select
+				    suggested_cluster_alias,
+						substring_index(group_concat(
+							cluster_name order by
+								((last_checked <= last_seen) is true) desc,
+								read_only asc,
+								num_slave_hosts desc
+							), ',', 1) as cluster_name,
+				    NOW()
+				  from
+				    database_instance
+				    left join database_instance_downtime using (hostname, port)
+				  where
+				    suggested_cluster_alias!=''
+						/* exclude newly demoted, downtimed masters */
+						and ifnull(
+								database_instance_downtime.downtime_active = 1
+								and database_instance_downtime.end_timestamp > now()
+								and database_instance_downtime.reason = ?
+							, false) is false
+				  group by
+				    suggested_cluster_alias
+			`, DowntimeLostInRecoveryMessage)
+		return log.Errore(err)
+	}
+	return ExecDBWriteFunc(writeFunc)
+}
+
+// ReplaceAliasClusterName replaces alis mapping of one cluster name onto a new cluster name.
+// Used in topology recovery
+func ReplaceAliasClusterName(oldClusterName string, newClusterName string) error {
+	writeFunc := func() error {
+		_, err := db.ExecOrchestrator(`
+			update cluster_alias
+				set cluster_name = ?
+				where cluster_name = ?
+			`,
+			newClusterName, oldClusterName)
+		return log.Errore(err)
 	}
 	return ExecDBWriteFunc(writeFunc)
 }

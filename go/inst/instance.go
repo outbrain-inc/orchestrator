@@ -18,212 +18,34 @@ package inst
 
 import (
 	"database/sql"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"github.com/outbrain/golib/log"
-	"github.com/outbrain/golib/math"
-	"github.com/outbrain/orchestrator/go/config"
 	"strconv"
 	"strings"
+
+	"github.com/outbrain/golib/math"
+	"github.com/outbrain/orchestrator/go/config"
 )
 
-// InstanceKey is an instance indicator, identifued by hostname and port
-type InstanceKey struct {
-	Hostname string
-	Port     int
-}
-
-// ParseInstanceKey will parse an InstanceKey from a string representation such as 127.0.0.1:3306
-func NewRawInstanceKey(hostPort string) (*InstanceKey, error) {
-	tokens := strings.SplitN(hostPort, ":", 2)
-	if len(tokens) != 2 {
-		return nil, fmt.Errorf("Cannot parse InstanceKey from %s. Expected format is host:port", hostPort)
-	}
-	instanceKey := &InstanceKey{Hostname: tokens[0]}
-	var err error
-	if instanceKey.Port, err = strconv.Atoi(tokens[1]); err != nil {
-		return instanceKey, fmt.Errorf("Invalid port: %s", tokens[1])
-	}
-
-	return instanceKey, nil
-}
-
-// NewInstanceKeyFromStrings creates a new InstanceKey by resolving hostname and port.
-// hostname is normalized via ResolveHostname. port is tested to be valid integer.
-func NewInstanceKeyFromStrings(hostname string, port string) (*InstanceKey, error) {
-	instanceKey := &InstanceKey{}
-	var err error
-	if instanceKey.Port, err = strconv.Atoi(port); err != nil {
-		return instanceKey, fmt.Errorf("Invalid port: %s", port)
-	}
-
-	if instanceKey.Hostname, err = ResolveHostname(hostname); err != nil {
-		return instanceKey, err
-	}
-
-	return instanceKey, nil
-}
-
-// ParseInstanceKey will parse an InstanceKey from a string representation such as 127.0.0.1:3306
-func ParseInstanceKey(hostPort string) (*InstanceKey, error) {
-	tokens := strings.SplitN(hostPort, ":", 2)
-	if len(tokens) != 2 {
-		return nil, fmt.Errorf("Cannot parse InstanceKey from %s. Expected format is host:port", hostPort)
-	}
-	return NewInstanceKeyFromStrings(tokens[0], tokens[1])
-}
-
-// ParseInstanceKeyLoose will parse an InstanceKey from a string representation such as 127.0.0.1:3306.
-// The port part is optional
-func ParseInstanceKeyLoose(hostPort string) (*InstanceKey, error) {
-	if !strings.Contains(hostPort, ":") {
-		return &InstanceKey{Hostname: hostPort, Port: config.Config.DefaultInstancePort}, nil
-	}
-	return ParseInstanceKey(hostPort)
-}
-
-// Formalize this key by getting CNAME for hostname
-func (this *InstanceKey) Formalize() *InstanceKey {
-	this.Hostname, _ = ResolveHostname(this.Hostname)
-	return this
-}
-
-// Equals tests equality between this key and another key
-func (this *InstanceKey) Equals(other *InstanceKey) bool {
-	return this.Hostname == other.Hostname && this.Port == other.Port
-}
-
-// IsValid uses simple heuristics to see whether this key represents an actual instance
-func (this *InstanceKey) IsValid() bool {
-	return len(this.Hostname) > 0 && this.Port > 0
-}
-
-// DisplayString returns a user-friendly string representation of this key
-func (this *InstanceKey) DisplayString() string {
-	return fmt.Sprintf("%s:%d", this.Hostname, this.Port)
-}
-
-type BinlogType int
+// CandidatePromotionRule describe the promotion preference/rule for an instance.
+// It maps to promotion_rule column in candidate_database_instance
+type CandidatePromotionRule string
 
 const (
-	BinaryLog BinlogType = iota
-	RelayLog
+	MustPromoteRule      CandidatePromotionRule = "must"
+	PreferPromoteRule                           = "prefer"
+	NeutralPromoteRule                          = "neutral"
+	PreferNotPromoteRule                        = "prefer_not"
+	MustNotPromoteRule                          = "must_not"
 )
-
-// BinlogCoordinates described binary log coordinates in the form of log file & log position.
-type BinlogCoordinates struct {
-	LogFile string
-	LogPos  int64
-	Type    BinlogType
-}
-
-// Equals tests equality of this corrdinate and another one.
-func (this *BinlogCoordinates) Equals(other *BinlogCoordinates) bool {
-	return this.LogFile == other.LogFile && this.LogPos == other.LogPos
-}
-
-// SmallerThan returns true if this coordinate is strictly smaller than the other.
-func (this *BinlogCoordinates) SmallerThan(other *BinlogCoordinates) bool {
-	if this.LogFile < other.LogFile {
-		return true
-	}
-	if this.LogFile == other.LogFile && this.LogPos < other.LogPos {
-		return true
-	}
-	return false
-}
-
-// FileSmallerThan returns true if this coordinate's file is strictly smaller than the other's.
-func (this *BinlogCoordinates) FileSmallerThan(other *BinlogCoordinates) bool {
-	return this.LogFile < other.LogFile
-}
-
-// FileNumberDistance returns the numeric distance between this corrdinate's file number and the other's.
-// Effectively it means "how many roatets/FLUSHes would make these coordinates's file reach the other's"
-func (this *BinlogCoordinates) FileNumberDistance(other *BinlogCoordinates) int {
-	thisNumber, _ := this.FileNumber()
-	otherNumber, _ := other.FileNumber()
-	return otherNumber - thisNumber
-}
-
-// FileNumber returns the numeric value of the file, and the length in characters representing the number in the filename.
-// Example: FileNumber() of mysqld.log.000789 is (789, 6)
-func (this *BinlogCoordinates) FileNumber() (int, int) {
-	tokens := strings.Split(this.LogFile, ".")
-	numPart := tokens[len(tokens)-1]
-	numLen := len(numPart)
-	fileNum, err := strconv.Atoi(numPart)
-	if err != nil {
-		return 0, 0
-	}
-	return fileNum, numLen
-}
-
-// PreviousFileCoordinatesBy guesses the filename of the previous binlog/relaylog, by given offset (number of files back)
-func (this *BinlogCoordinates) PreviousFileCoordinatesBy(offset int) (BinlogCoordinates, error) {
-	result := BinlogCoordinates{LogPos: 0, Type: this.Type}
-
-	fileNum, numLen := this.FileNumber()
-	if fileNum == 0 {
-		return result, errors.New("Log file number is zero, cannot detect previous file")
-	}
-	newNumStr := fmt.Sprintf("%d", (fileNum - offset))
-	newNumStr = strings.Repeat("0", numLen-len(newNumStr)) + newNumStr
-
-	tokens := strings.Split(this.LogFile, ".")
-	tokens[len(tokens)-1] = newNumStr
-	result.LogFile = strings.Join(tokens, ".")
-	return result, nil
-}
-
-// PreviousFileCoordinates guesses the filename of the previous binlog/relaylog
-func (this *BinlogCoordinates) PreviousFileCoordinates() (BinlogCoordinates, error) {
-	return this.PreviousFileCoordinatesBy(1)
-}
-
-// PreviousFileCoordinates guesses the filename of the previous binlog/relaylog
-func (this *BinlogCoordinates) NextFileCoordinates() (BinlogCoordinates, error) {
-	result := BinlogCoordinates{LogPos: 0, Type: this.Type}
-
-	fileNum, numLen := this.FileNumber()
-	newNumStr := fmt.Sprintf("%d", (fileNum + 1))
-	newNumStr = strings.Repeat("0", numLen-len(newNumStr)) + newNumStr
-
-	tokens := strings.Split(this.LogFile, ".")
-	tokens[len(tokens)-1] = newNumStr
-	result.LogFile = strings.Join(tokens, ".")
-	return result, nil
-}
-
-// DisplayString returns a user-friendly string representation of these coordinates
-func (this *BinlogCoordinates) DisplayString() string {
-	return fmt.Sprintf("%s:%d", this.LogFile, this.LogPos)
-}
-
-// InstanceKeyMap is a convenience struct for listing InstanceKey-s
-type InstanceKeyMap map[InstanceKey]bool
-
-// GetInstanceKeys returns keys in this map in the form of an array
-func (this *InstanceKeyMap) GetInstanceKeys() []InstanceKey {
-	res := []InstanceKey{}
-	for key := range *this {
-		res = append(res, key)
-	}
-	return res
-}
-
-// MarshalJSON will marshal this map as JSON
-func (this *InstanceKeyMap) MarshalJSON() ([]byte, error) {
-	return json.Marshal(this.GetInstanceKeys())
-}
 
 // Instance represents a database instance, including its current configuration & status.
 // It presents important replication configuration and detailed replication status.
 type Instance struct {
 	Key                    InstanceKey
+	InstanceAlias          string
 	Uptime                 uint
 	ServerID               uint
+	ServerUUID             string
 	Version                string
 	ReadOnly               bool
 	Binlog_format          string
@@ -231,6 +53,7 @@ type Instance struct {
 	LogSlaveUpdatesEnabled bool
 	SelfBinlogCoordinates  BinlogCoordinates
 	MasterKey              InstanceKey
+	IsDetachedMaster       bool
 	Slave_SQL_Running      bool
 	Slave_IO_Running       bool
 	HasReplicationFilters  bool
@@ -240,30 +63,42 @@ type Instance struct {
 	UsingPseudoGTID        bool
 	ReadBinlogCoordinates  BinlogCoordinates
 	ExecBinlogCoordinates  BinlogCoordinates
+	IsDetached             bool
 	RelaylogCoordinates    BinlogCoordinates
 	LastSQLError           string
 	LastIOError            string
 	SecondsBehindMaster    sql.NullInt64
 	SQLDelay               uint
 	ExecutedGtidSet        string
+	GtidPurged             string
 
-	SlaveLagSeconds     sql.NullInt64
-	SlaveHosts          InstanceKeyMap
-	ClusterName         string
-	DataCenter          string
-	PhysicalEnvironment string
-	ReplicationDepth    uint
-	IsCoMaster          bool
+	SlaveLagSeconds                 sql.NullInt64
+	SlaveHosts                      InstanceKeyMap
+	ClusterName                     string
+	SuggestedClusterAlias           string
+	DataCenter                      string
+	PhysicalEnvironment             string
+	ReplicationDepth                uint
+	IsCoMaster                      bool
+	HasReplicationCredentials       bool
+	ReplicationCredentialsAvailable bool
+	SemiSyncEnforced                bool
 
+	LastSeenTimestamp    string
 	IsLastCheckValid     bool
 	IsUpToDate           bool
 	IsRecentlyChecked    bool
 	SecondsSinceLastSeen sql.NullInt64
 	CountMySQLSnapshots  int
 
-	IsCandidate        bool
-	IsDowntimed        bool
-	UnresolvedHostname string
+	IsCandidate          bool
+	PromotionRule        CandidatePromotionRule
+	IsDowntimed          bool
+	DowntimeReason       string
+	DowntimeOwner        string
+	DowntimeEndTimestamp string
+	UnresolvedHostname   string
+	AllowTLS             bool
 }
 
 // NewInstance creates a new, empty instance
@@ -281,51 +116,53 @@ func (this *Instance) Equals(other *Instance) bool {
 
 // MajorVersion returns this instance's major version number (e.g. for 5.5.36 it returns "5.5")
 func (this *Instance) MajorVersion() []string {
-	return strings.Split(this.Version, ".")[:2]
+	return MajorVersion(this.Version)
+}
+
+// MajorVersion returns this instance's major version number (e.g. for 5.5.36 it returns "5.5")
+func (this *Instance) MajorVersionString() string {
+	return strings.Join(this.MajorVersion(), ".")
 }
 
 func (this *Instance) IsMySQL51() bool {
-	return strings.Join(this.MajorVersion(), ".") == "5.1"
+	return this.MajorVersionString() == "5.1"
 }
 
 func (this *Instance) IsMySQL55() bool {
-	return strings.Join(this.MajorVersion(), ".") == "5.5"
+	return this.MajorVersionString() == "5.5"
 }
 
 func (this *Instance) IsMySQL56() bool {
-	return strings.Join(this.MajorVersion(), ".") == "5.6"
+	return this.MajorVersionString() == "5.6"
 }
 
 func (this *Instance) IsMySQL57() bool {
-	return strings.Join(this.MajorVersion(), ".") == "5.7"
+	return this.MajorVersionString() == "5.7"
 }
 
 func (this *Instance) IsMySQL58() bool {
-	return strings.Join(this.MajorVersion(), ".") == "5.8"
+	return this.MajorVersionString() == "5.8"
+}
+
+func (this *Instance) IsMySQL59() bool {
+	return this.MajorVersionString() == "5.9"
+}
+
+// IsSmallerBinlogFormat returns true when this instance's binlgo format is
+// "smaller" than the other's, i.e. binary logs cannot flow from the other instance to this one
+func (this *Instance) IsSmallerBinlogFormat(other *Instance) bool {
+	return IsSmallerBinlogFormat(this.Binlog_format, other.Binlog_format)
 }
 
 // IsSmallerMajorVersion tests this instance against another and returns true if this instance is of a smaller "major" varsion.
 // e.g. 5.5.36 is NOT a smaller major version as comapred to 5.5.36, but IS as compared to 5.6.9
 func (this *Instance) IsSmallerMajorVersion(other *Instance) bool {
-	thisMajorVersion := this.MajorVersion()
-	otherMajorVersion := other.MajorVersion()
-	for i := 0; i < len(thisMajorVersion); i++ {
-		this_token, _ := strconv.Atoi(thisMajorVersion[i])
-		other_token, _ := strconv.Atoi(otherMajorVersion[i])
-		if this_token < other_token {
-			return true
-		}
-		if this_token > other_token {
-			return false
-		}
-	}
-	return false
+	return IsSmallerMajorVersion(this.Version, other.Version)
 }
 
 // IsSmallerMajorVersionByString cehcks if this instance has a smaller major version number than given one
 func (this *Instance) IsSmallerMajorVersionByString(otherVersion string) bool {
-	other := &Instance{Version: otherVersion}
-	return this.IsSmallerMajorVersion(other)
+	return IsSmallerMajorVersion(this.Version, otherVersion)
 }
 
 // IsMariaDB checkes whether this is any version of MariaDB
@@ -412,28 +249,7 @@ func (this *Instance) NextGTID() (string, error) {
 
 // AddSlaveKey adds a slave to the list of this instance's slaves.
 func (this *Instance) AddSlaveKey(slaveKey *InstanceKey) {
-	this.SlaveHosts[*slaveKey] = true
-}
-
-// GetSlaveHostsAsJson Marshals slaves list a JSON
-func (this *Instance) GetSlaveHostsAsJson() string {
-	blob, _ := this.SlaveHosts.MarshalJSON()
-	return string(blob)
-}
-
-// ReadSlaveHostsFromJson unmarshalls a json to read list of slaves
-func (this *Instance) ReadSlaveHostsFromJson(jsonString string) error {
-	var keys []InstanceKey
-	err := json.Unmarshal([]byte(jsonString), &keys)
-	if err != nil {
-		return log.Errore(err)
-	}
-
-	this.SlaveHosts = make(map[InstanceKey]bool)
-	for _, key := range keys {
-		this.AddSlaveKey(&key)
-	}
-	return err
+	this.SlaveHosts.AddKey(*slaveKey)
 }
 
 // GetNextBinaryLog returns the successive, if any, binary log file to the one given
@@ -463,18 +279,19 @@ func (this *Instance) CanReplicateFrom(other *Instance) (bool, error) {
 	if !other.LogBinEnabled {
 		return false, fmt.Errorf("instance does not have binary logs enabled: %+v", other.Key)
 	}
-	if !other.LogSlaveUpdatesEnabled {
-		return false, fmt.Errorf("instance does not have log_slave_updates enabled: %+v", other.Key)
+	if other.IsSlave() {
+		if !other.LogSlaveUpdatesEnabled {
+			return false, fmt.Errorf("instance does not have log_slave_updates enabled: %+v", other.Key)
+		}
+		// OK for a master to not have log_slave_updates
+		// Not OK for a slave, for it has to relay the logs.
 	}
 	if this.IsSmallerMajorVersion(other) && !this.IsBinlogServer() {
 		return false, fmt.Errorf("instance %+v has version %s, which is lower than %s on %+v ", this.Key, this.Version, other.Version, other.Key)
 	}
 	if this.LogBinEnabled && this.LogSlaveUpdatesEnabled {
-		if this.Binlog_format == "STATEMENT" && (other.Binlog_format == "ROW" || other.Binlog_format == "MIXED") {
-			return false, fmt.Errorf("Cannot replicate from ROW/MIXED binlog format on %+v to STATEMENT on %+v", other.Key, this.Key)
-		}
-		if this.Binlog_format == "MIXED" && other.Binlog_format == "ROW" {
-			return false, fmt.Errorf("Cannot replicate from ROW binlog format on %+v to MIXED on %+v", other.Key, this.Key)
+		if this.IsSmallerBinlogFormat(other) {
+			return false, fmt.Errorf("Cannot replicate from %+v binlog format on %+v to %+v on %+v", other.Binlog_format, other.Key, this.Binlog_format, this.Key)
 		}
 	}
 	if config.Config.VerifyReplicationFilters {
@@ -529,12 +346,6 @@ func (this *Instance) CanMoveAsCoMaster() (bool, error) {
 	if !this.IsRecentlyChecked {
 		return false, fmt.Errorf("%+v: not recently checked", this.Key)
 	}
-	if this.Slave_SQL_Running {
-		return false, fmt.Errorf("%+v: instance is replicating", this.Key)
-	}
-	if this.Slave_IO_Running {
-		return false, fmt.Errorf("%+v: instance is replicating", this.Key)
-	}
 	return true, nil
 }
 
@@ -552,32 +363,68 @@ func (this *Instance) CanMoveViaMatch() (bool, error) {
 // StatusString returns a human readable description of this instance's status
 func (this *Instance) StatusString() string {
 	if !this.IsLastCheckValid {
-		return "last check invalid"
+		return "invalid"
 	}
 	if !this.IsRecentlyChecked {
-		return "not recently checked"
+		return "unchecked"
 	}
 	if this.IsSlave() && !(this.Slave_SQL_Running && this.Slave_IO_Running) {
-		return "not replicating"
-	}
-	if this.IsSlave() && !this.SecondsBehindMaster.Valid {
-		return "cannot determine slave lag"
+		return "nonreplicating"
 	}
 	if this.IsSlave() && this.SecondsBehindMaster.Int64 > int64(config.Config.ReasonableMaintenanceReplicationLagSeconds) {
-		return "lags too much"
+		return "lag"
 	}
-	return "OK"
+	return "ok"
+}
+
+// LagStatusString returns a human readable representation of current lag
+func (this *Instance) LagStatusString() string {
+	if this.IsDetached {
+		return "detached"
+	}
+	if !this.IsLastCheckValid {
+		return "unknown"
+	}
+	if !this.IsRecentlyChecked {
+		return "unknown"
+	}
+	if this.IsSlave() && !(this.Slave_SQL_Running && this.Slave_IO_Running) {
+		return "null"
+	}
+	if this.IsSlave() && !this.SecondsBehindMaster.Valid {
+		return "null"
+	}
+	if this.IsSlave() && this.SecondsBehindMaster.Int64 > int64(config.Config.ReasonableMaintenanceReplicationLagSeconds) {
+		return fmt.Sprintf("%+vs", this.SecondsBehindMaster.Int64)
+	}
+	return fmt.Sprintf("%+vs", this.SecondsBehindMaster.Int64)
 }
 
 // HumanReadableDescription returns a simple readable string describing the status, version,
 // etc. properties of this instance
 func (this *Instance) HumanReadableDescription() string {
 	tokens := []string{}
+	tokens = append(tokens, this.LagStatusString())
 	tokens = append(tokens, this.StatusString())
 	tokens = append(tokens, this.Version)
-	tokens = append(tokens, this.Binlog_format)
-	if this.LogSlaveUpdatesEnabled {
+	if this.ReadOnly {
+		tokens = append(tokens, "ro")
+	} else {
+		tokens = append(tokens, "rw")
+	}
+	if this.LogBinEnabled {
+		tokens = append(tokens, this.Binlog_format)
+	} else {
+		tokens = append(tokens, "nobinlog")
+	}
+	if this.LogBinEnabled && this.LogSlaveUpdatesEnabled {
 		tokens = append(tokens, ">>")
+	}
+	if this.UsingGTID() {
+		tokens = append(tokens, "GTID")
+	}
+	if this.UsingPseudoGTID {
+		tokens = append(tokens, "P-GTID")
 	}
 	description := fmt.Sprintf("[%s]", strings.Join(tokens, ","))
 	return description

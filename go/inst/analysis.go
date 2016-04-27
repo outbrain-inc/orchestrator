@@ -21,6 +21,7 @@ import (
 )
 
 type AnalysisCode string
+type StructureAnalysisCode string
 
 const (
 	NoProblem                                             AnalysisCode = "NoProblem"
@@ -28,13 +29,16 @@ const (
 	DeadMaster                                                         = "DeadMaster"
 	DeadMasterAndSlaves                                                = "DeadMasterAndSlaves"
 	DeadMasterAndSomeSlaves                                            = "DeadMasterAndSomeSlaves"
+	UnreachableMasterWithStaleSlaves                                   = "UnreachableMasterWithStaleSlaves"
 	UnreachableMaster                                                  = "UnreachableMaster"
 	MasterSingleSlaveNotReplicating                                    = "MasterSingleSlaveNotReplicating"
 	MasterSingleSlaveDead                                              = "MasterSingleSlaveDead"
 	AllMasterSlavesNotReplicating                                      = "AllMasterSlavesNotReplicating"
 	AllMasterSlavesNotReplicatingOrDead                                = "AllMasterSlavesNotReplicatingOrDead"
+	AllMasterSlavesStale                                               = "AllMasterSlavesStale"
 	MasterWithoutSlaves                                                = "MasterWithoutSlaves"
 	DeadCoMaster                                                       = "DeadCoMaster"
+	DeadCoMasterAndSomeSlaves                                          = "DeadCoMasterAndSomeSlaves"
 	UnreachableCoMaster                                                = "UnreachableCoMaster"
 	AllCoMasterSlavesNotReplicating                                    = "AllCoMasterSlavesNotReplicating"
 	DeadIntermediateMaster                                             = "DeadIntermediateMaster"
@@ -48,53 +52,65 @@ const (
 	BinlogServerFailingToConnectToMaster                               = "BinlogServerFailingToConnectToMaster"
 )
 
+const (
+	StatementAndMixedLoggingSlavesStructureWarning StructureAnalysisCode = "StatementAndMixedLoggingSlavesStructureWarning"
+	StatementAndRowLoggingSlavesStructureWarning                         = "StatementAndRowLoggingSlavesStructureWarning"
+	MixedAndRowLoggingSlavesStructureWarning                             = "MixedAndRowLoggingSlavesStructureWarning"
+	MultipleMajorVersionsLoggingSlaves                                   = "MultipleMajorVersionsLoggingSlaves"
+)
+
 // ReplicationAnalysis notes analysis on replication chain status, per instance
 type ReplicationAnalysis struct {
-	AnalyzedInstanceKey                 InstanceKey
-	AnalyzedInstanceMasterKey           InstanceKey
-	ClusterDetails                      ClusterInfo
-	IsMaster                            bool
-	IsCoMaster                          bool
-	LastCheckValid                      bool
-	CountSlaves                         uint
-	CountValidSlaves                    uint
-	CountValidReplicatingSlaves         uint
-	CountSlavesFailingToConnectToMaster uint
-	ReplicationDepth                    uint
-	SlaveHosts                          InstanceKeyMap
-	IsFailingToConnectToMaster          bool
-	Analysis                            AnalysisCode
-	Description                         string
-	IsDowntimed                         bool
-	DowntimeEndTimestamp                string
-	DowntimeRemainingSeconds            int
-	IsBinlogServer                      bool
-	PseudoGTIDImmediateTopology         bool
-	OracleGTIDImmediateTopology         bool
-	MariaDBGTIDImmediateTopology        bool
-	BinlogServerImmediateTopology       bool
+	AnalyzedInstanceKey                     InstanceKey
+	AnalyzedInstanceMasterKey               InstanceKey
+	ClusterDetails                          ClusterInfo
+	IsMaster                                bool
+	IsCoMaster                              bool
+	LastCheckValid                          bool
+	CountSlaves                             uint
+	CountValidSlaves                        uint
+	CountValidReplicatingSlaves             uint
+	CountSlavesFailingToConnectToMaster     uint
+	CountStaleSlaves                        uint
+	ReplicationDepth                        uint
+	SlaveHosts                              InstanceKeyMap
+	IsFailingToConnectToMaster              bool
+	Analysis                                AnalysisCode
+	Description                             string
+	StructureAnalysis                       []StructureAnalysisCode
+	IsDowntimed                             bool
+	DowntimeEndTimestamp                    string
+	DowntimeRemainingSeconds                int
+	IsBinlogServer                          bool
+	PseudoGTIDImmediateTopology             bool
+	OracleGTIDImmediateTopology             bool
+	MariaDBGTIDImmediateTopology            bool
+	BinlogServerImmediateTopology           bool
+	CountStatementBasedLoggingSlaves        uint
+	CountMixedBasedLoggingSlaves            uint
+	CountRowBasedLoggingSlaves              uint
+	CountDistinctMajorVersionsLoggingSlaves uint
 }
 
-// GetSlaveHostsAsString serializes all slave keys as a single comma delimited string
-func (this *ReplicationAnalysis) GetSlaveHostsAsString() string {
-	slaveHostsStrings := []string{}
-	for slaveKey := range this.SlaveHosts {
-		slaveHostsStrings = append(slaveHostsStrings, slaveKey.DisplayString())
-	}
-	return strings.Join(slaveHostsStrings, ",")
+type ReplicationAnalysisChangelog struct {
+	AnalyzedInstanceKey InstanceKey
+	Changelog           string
 }
 
 // ReadSlaveHostsFromString parses and reads slave keys from comma delimited string
 func (this *ReplicationAnalysis) ReadSlaveHostsFromString(slaveHostsString string) error {
-	this.SlaveHosts = make(map[InstanceKey]bool)
+	this.SlaveHosts = *NewInstanceKeyMap()
+	return this.SlaveHosts.ReadCommaDelimitedList(slaveHostsString)
+}
 
-	slaveHostsStrings := strings.Split(slaveHostsString, ",")
-	for _, slaveKeyString := range slaveHostsStrings {
-		slaveKey, err := ParseInstanceKey(slaveKeyString)
-		if err != nil {
-			return err
-		}
-		this.SlaveHosts[*slaveKey] = true
+// AnalysisString returns a human friendly description of all analysis issues
+func (this *ReplicationAnalysis) AnalysisString() string {
+	result := []string{}
+	if this.Analysis != NoProblem {
+		result = append(result, string(this.Analysis))
 	}
-	return nil
+	for _, structureAnalysis := range this.StructureAnalysis {
+		result = append(result, string(structureAnalysis))
+	}
+	return strings.Join(result, ", ")
 }

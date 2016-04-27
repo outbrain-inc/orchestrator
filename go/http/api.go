@@ -19,17 +19,21 @@ package http
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/go-martini/martini"
-	"github.com/martini-contrib/auth"
-	"github.com/martini-contrib/render"
 	"net"
 	"net/http"
 	"strconv"
+
+	"github.com/go-martini/martini"
+	"github.com/martini-contrib/auth"
+	"github.com/martini-contrib/render"
+
+	"github.com/outbrain/golib/util"
 
 	"github.com/outbrain/orchestrator/go/agent"
 	"github.com/outbrain/orchestrator/go/config"
 	"github.com/outbrain/orchestrator/go/inst"
 	"github.com/outbrain/orchestrator/go/logic"
+	"github.com/outbrain/orchestrator/go/process"
 )
 
 // APIResponseCode is an OK/ERROR response code
@@ -258,7 +262,20 @@ func (this *HttpAPI) BeginDowntime(params martini.Params, r render.Render, req *
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
-	err = inst.BeginDowntime(&instanceKey, params["owner"], params["reason"], 0)
+
+	var durationSeconds int = 0
+	if params["duration"] != "" {
+		durationSeconds, err = util.SimpleTimeToSeconds(params["duration"])
+		if durationSeconds < 0 {
+			err = fmt.Errorf("Duration value must be non-negative. Given value: %d", durationSeconds)
+		}
+		if err != nil {
+			r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+			return
+		}
+	}
+
+	err = inst.BeginDowntime(&instanceKey, params["owner"], params["reason"], uint(durationSeconds))
 
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error(), Details: instanceKey})
@@ -430,6 +447,28 @@ func (this *HttpAPI) ReattachSlave(params martini.Params, r render.Render, req *
 		return
 	}
 	instance, err := inst.ReattachSlaveOperation(&instanceKey)
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Slave reattached: %+v", instance.Key), Details: instance})
+}
+
+// ReattachSlaveMasterHost reverts a DetachSlaveMasterHost command
+// by resoting the original master hostname in CHANGE MASTER TO
+func (this *HttpAPI) ReattachSlaveMasterHost(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+	if !isAuthorizedForAction(req, user) {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
+		return
+	}
+	instanceKey, err := this.getInstanceKey(params["host"], params["port"])
+
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+	instance, err := inst.ReattachSlaveMasterHost(&instanceKey)
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
@@ -700,7 +739,7 @@ func (this *HttpAPI) LastPseudoGTID(params martini.Params, r render.Render, req 
 		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("Instance not found: %+v", instanceKey)})
 		return
 	}
-	coordinates, text, err := inst.FindLastPseudoGTIDEntry(instance, instance.RelaylogCoordinates, false, nil)
+	coordinates, text, err := inst.FindLastPseudoGTIDEntry(instance, instance.RelaylogCoordinates, nil, false, nil)
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
@@ -808,8 +847,8 @@ func (this *HttpAPI) MatchUpSlaves(params martini.Params, r render.Render, req *
 	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Matched up %d slaves of %+v below %+v; %d errors: %+v", len(slaves), instanceKey, newMaster.Key, len(errs), errs), Details: newMaster.Key})
 }
 
-// RegroupSlaves attempts to pick a slave of a given instance and make it enslave its siblings, efficiently,
-// using pseudo-gtid if necessary
+// RegroupSlaves attempts to pick a slave of a given instance and make it enslave its siblings, using any
+// method possible (GTID, Pseudo-GTID, binlog servers)
 func (this *HttpAPI) RegroupSlaves(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
@@ -821,7 +860,32 @@ func (this *HttpAPI) RegroupSlaves(params martini.Params, r render.Render, req *
 		return
 	}
 
-	lostSlaves, equalSlaves, aheadSlaves, promotedSlave, err := inst.RegroupSlaves(&instanceKey, false, nil)
+	lostSlaves, equalSlaves, aheadSlaves, cannotReplicateSlaves, promotedSlave, err := inst.RegroupSlaves(&instanceKey, false, nil, nil)
+	lostSlaves = append(lostSlaves, cannotReplicateSlaves...)
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("promoted slave: %s, lost: %d, trivial: %d, pseudo-gtid: %d",
+		promotedSlave.Key.DisplayString(), len(lostSlaves), len(equalSlaves), len(aheadSlaves)), Details: promotedSlave.Key})
+}
+
+// RegroupSlaves attempts to pick a slave of a given instance and make it enslave its siblings, efficiently,
+// using pseudo-gtid if necessary
+func (this *HttpAPI) RegroupSlavesPseudoGTID(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+	if !isAuthorizedForAction(req, user) {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
+		return
+	}
+	instanceKey, err := this.getInstanceKey(params["host"], params["port"])
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+
+	lostSlaves, equalSlaves, aheadSlaves, cannotReplicateSlaves, promotedSlave, err := inst.RegroupSlavesPseudoGTID(&instanceKey, false, nil, nil)
+	lostSlaves = append(lostSlaves, cannotReplicateSlaves...)
 
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
@@ -844,7 +908,8 @@ func (this *HttpAPI) RegroupSlavesGTID(params martini.Params, r render.Render, r
 		return
 	}
 
-	lostSlaves, movedSlaves, promotedSlave, err := inst.RegroupSlavesGTID(&instanceKey, false, nil)
+	lostSlaves, movedSlaves, cannotReplicateSlaves, promotedSlave, err := inst.RegroupSlavesGTID(&instanceKey, false, nil)
+	lostSlaves = append(lostSlaves, cannotReplicateSlaves...)
 
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
@@ -853,6 +918,29 @@ func (this *HttpAPI) RegroupSlavesGTID(params martini.Params, r render.Render, r
 
 	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("promoted slave: %s, lost: %d, moved: %d",
 		promotedSlave.Key.DisplayString(), len(lostSlaves), len(movedSlaves)), Details: promotedSlave.Key})
+}
+
+// RegroupSlavesBinlogServers attempts to pick a slave of a given instance and make it enslave its siblings, efficiently, using GTID
+func (this *HttpAPI) RegroupSlavesBinlogServers(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+	if !isAuthorizedForAction(req, user) {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
+		return
+	}
+	instanceKey, err := this.getInstanceKey(params["host"], params["port"])
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+
+	_, promotedBinlogServer, err := inst.RegroupSlavesBinlogServers(&instanceKey, false)
+
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("promoted binlog server: %s",
+		promotedBinlogServer.Key.DisplayString()), Details: promotedBinlogServer.Key})
 }
 
 // MakeMaster attempts to make the given instance a master, and match its siblings to be its slaves
@@ -1110,7 +1198,7 @@ func (this *HttpAPI) Cluster(params martini.Params, r render.Render, req *http.R
 	r.JSON(200, instances)
 }
 
-// Cluster provides list of instances in given cluster
+// ClusterByAlias provides list of instances in given cluster
 func (this *HttpAPI) ClusterByAlias(params martini.Params, r render.Render, req *http.Request) {
 	clusterName, err := inst.GetClusterByAlias(params["clusterAlias"])
 	if err != nil {
@@ -1119,6 +1207,23 @@ func (this *HttpAPI) ClusterByAlias(params martini.Params, r render.Render, req 
 	}
 
 	params["clusterName"] = clusterName
+	this.Cluster(params, r, req)
+}
+
+// ClusterByInstance provides list of instances in cluster an instance belongs to
+func (this *HttpAPI) ClusterByInstance(params martini.Params, r render.Render, req *http.Request) {
+	instanceKey, err := this.getInstanceKey(params["host"], params["port"])
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+	instance, found, err := inst.ReadInstance(&instanceKey)
+	if (!found) || (err != nil) {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("Cannot read instance: %+v", instanceKey)})
+		return
+	}
+
+	params["clusterName"] = instance.ClusterName
 	this.Cluster(params, r, req)
 }
 
@@ -1189,7 +1294,7 @@ func (this *HttpAPI) Clusters(params martini.Params, r render.Render, req *http.
 
 // ClustersInfo provides list of known clusters, along with some added metadata per cluster
 func (this *HttpAPI) ClustersInfo(params martini.Params, r render.Render, req *http.Request) {
-	clustersInfo, err := inst.ReadClustersInfo()
+	clustersInfo, err := inst.ReadClustersInfo("")
 
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
@@ -1234,7 +1339,12 @@ func (this *HttpAPI) Audit(params martini.Params, r render.Render, req *http.Req
 	if err != nil || page < 0 {
 		page = 0
 	}
-	audits, err := inst.ReadRecentAudit(page)
+	var auditedInstanceKey *inst.InstanceKey
+	if instanceKey, err := this.getInstanceKey(params["host"], params["port"]); err == nil {
+		auditedInstanceKey = &instanceKey
+	}
+
+	audits, err := inst.ReadRecentAudit(auditedInstanceKey, page)
 
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
@@ -1304,14 +1414,15 @@ func (this *HttpAPI) SubmitPoolInstances(params martini.Params, r render.Render,
 }
 
 // SubmitPoolHostnames (re-)applies the list of hostnames for a given pool
-func (this *HttpAPI) ReadClusterPoolInstances(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+func (this *HttpAPI) ReadClusterPoolInstancesMap(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
 	}
 	clusterName := params["clusterName"]
+	pool := params["pool"]
 
-	poolInstancesMap, err := inst.ReadClusterPoolInstances(clusterName)
+	poolInstancesMap, err := inst.ReadClusterPoolInstancesMap(clusterName, pool)
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
 		return
@@ -1320,23 +1431,61 @@ func (this *HttpAPI) ReadClusterPoolInstances(params martini.Params, r render.Re
 	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Read pool instances for cluster %s", clusterName), Details: poolInstancesMap})
 }
 
+// GetHeuristicClusterPoolInstances returns instances belonging to a cluster's pool
+func (this *HttpAPI) GetHeuristicClusterPoolInstances(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+	if !isAuthorizedForAction(req, user) {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
+		return
+	}
+	clusterName, err := inst.ReadClusterNameByAlias(params["clusterName"])
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
+		return
+	}
+	pool := params["pool"]
+
+	instances, err := inst.GetHeuristicClusterPoolInstances(clusterName, pool)
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
+		return
+	}
+
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Heuristic pool instances for cluster %s", clusterName), Details: instances})
+}
+
+// GetHeuristicClusterPoolInstances returns instances belonging to a cluster's pool
+func (this *HttpAPI) GetHeuristicClusterPoolInstancesLag(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+	if !isAuthorizedForAction(req, user) {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
+		return
+	}
+	clusterName, err := inst.ReadClusterNameByAlias(params["clusterName"])
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
+		return
+	}
+	pool := params["pool"]
+
+	lag, err := inst.GetHeuristicClusterPoolInstancesLag(clusterName, pool)
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
+		return
+	}
+
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Heuristic pool lag for cluster %s", clusterName), Details: lag})
+}
+
 // ReloadClusterAlias clears in-memory hostname resovle cache
 func (this *HttpAPI) ReloadClusterAlias(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
 	}
-	err := inst.ReadClusterAliases()
 
-	if err != nil {
-		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
-		return
-	}
-
-	r.JSON(200, &APIResponse{Code: OK, Message: "Cluster alias cache reloaded"})
+	r.JSON(200, &APIResponse{Code: ERROR, Message: "This API call has been retired"})
 }
 
-// Agents provides complete list of registered agents (See https://github.com/outbrain/orchestrator-agent)
+// Agents provides complete list of registered agents (See https://github.com/github/orchestrator-agent)
 func (this *HttpAPI) Agents(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
@@ -1662,7 +1811,7 @@ func (this *HttpAPI) Headers(params martini.Params, r render.Render, req *http.R
 
 // Health performs a self test
 func (this *HttpAPI) Health(params martini.Params, r render.Render, req *http.Request) {
-	health, err := logic.HealthTest()
+	health, err := process.HealthTest()
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("Application node is unhealthy %+v", err), Details: health})
 		return
@@ -1677,20 +1826,40 @@ func (this *HttpAPI) LBCheck(params martini.Params, r render.Render, req *http.R
 	r.JSON(200, "OK")
 }
 
+// A configurable endpoint that can be for regular status checks or whatever.  While similar to
+// Health() this returns 500 on failure.  This will prevent issues for those that have come to
+// expect a 200
+// It might be a good idea to deprecate the current Health() behavior and roll this in at some
+// point
+func (this *HttpAPI) StatusCheck(params martini.Params, r render.Render, req *http.Request) {
+	// SimpleHealthTest just checks to see if we can connect to the database.  Lighter weight if you intend to call it a lot
+	var health *process.HealthStatus
+	var err error
+	if config.Config.StatusSimpleHealth {
+		health, err = process.SimpleHealthTest()
+	} else {
+		health, err = process.HealthTest()
+	}
+	if err != nil {
+		r.JSON(500, &APIResponse{Code: ERROR, Message: fmt.Sprintf("Application node is unhealthy %+v", err), Details: health})
+		return
+	}
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Application node is healthy"), Details: health})
+}
+
 // GrabElection forcibly grabs leadership. Use with care!!
 func (this *HttpAPI) GrabElection(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
 	}
-	success, err := logic.GrabElection()
-	if err != nil || !success {
+	err := process.GrabElection()
+	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("Unable to grab election: %+v", err)})
 		return
 	}
 
 	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Node elected as leader")})
-
 }
 
 // Reelect causes re-elections for an active node
@@ -1699,7 +1868,7 @@ func (this *HttpAPI) Reelect(params martini.Params, r render.Render, req *http.R
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
 	}
-	err := logic.Reelect()
+	err := process.Reelect()
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("Unable to re-elect: %+v", err)})
 		return
@@ -1716,6 +1885,7 @@ func (this *HttpAPI) ReloadConfiguration(params martini.Params, r render.Render,
 		return
 	}
 	config.Reload()
+	inst.AuditOperation("reload-configuration", nil, "Triggered via API")
 
 	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Config reloaded")})
 
@@ -1723,7 +1893,7 @@ func (this *HttpAPI) ReloadConfiguration(params martini.Params, r render.Render,
 
 // ReplicationAnalysis retuens list of issues
 func (this *HttpAPI) ReplicationAnalysis(params martini.Params, r render.Render, req *http.Request) {
-	analysis, err := inst.GetReplicationAnalysis(true)
+	analysis, err := inst.GetReplicationAnalysis(params["clusterName"], true, false)
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("Cannot get analysis: %+v", err)})
 		return
@@ -1755,16 +1925,51 @@ func (this *HttpAPI) Recover(params martini.Params, r render.Render, req *http.R
 	}
 
 	skipProcesses := (req.URL.Query().Get("skipProcesses") == "true") || (params["skipProcesses"] == "true")
-	actionTaken, _, err := logic.CheckAndRecover(&instanceKey, candidateKey, true, skipProcesses)
+	recoveryAttempted, _, err := logic.CheckAndRecover(&instanceKey, candidateKey, skipProcesses)
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
-	if actionTaken {
+	if recoveryAttempted {
 		r.JSON(200, &APIResponse{Code: OK, Message: "Action taken", Details: instanceKey})
 	} else {
 		r.JSON(200, &APIResponse{Code: OK, Message: "No action taken", Details: instanceKey})
 	}
+}
+
+// Registers promotion preference for given instance
+func (this *HttpAPI) RegisterCandidate(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+	if !isAuthorizedForAction(req, user) {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
+		return
+	}
+	instanceKey, err := this.getInstanceKey(params["host"], params["port"])
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+	switch params["promotionRule"] {
+	case "prefer", "neutral", "must_not":
+		{
+			// OK
+		}
+	default:
+		{
+			r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("Invalid promotionRule: %+v", params["promotionRule"])})
+			return
+		}
+	}
+
+	promotionRule := inst.CandidatePromotionRule(params["promotionRule"])
+
+	err = inst.RegisterCandidateInstance(&instanceKey, promotionRule)
+
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+
+	r.JSON(200, &APIResponse{Code: OK, Message: "Registered candidate", Details: instanceKey})
 }
 
 // AutomatedRecoveryFilters retuens list of clusters which are configured with automated recovery
@@ -1779,11 +1984,19 @@ func (this *HttpAPI) AutomatedRecoveryFilters(params martini.Params, r render.Re
 
 // AuditFailureDetection provides list of topology_failure_detection entries
 func (this *HttpAPI) AuditFailureDetection(params martini.Params, r render.Render, req *http.Request) {
-	page, err := strconv.Atoi(params["page"])
-	if err != nil || page < 0 {
-		page = 0
+
+	var audits []logic.TopologyRecovery
+	var err error
+
+	if detectionId, derr := strconv.ParseInt(params["id"], 10, 0); derr == nil && detectionId > 0 {
+		audits, err = logic.ReadFailureDetection(detectionId)
+	} else {
+		page, derr := strconv.Atoi(params["page"])
+		if derr != nil || page < 0 {
+			page = 0
+		}
+		audits, err = logic.ReadRecentFailureDetections(page)
 	}
-	audits, err := logic.ReadRecentFailureDetections(page)
 
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
@@ -1793,13 +2006,33 @@ func (this *HttpAPI) AuditFailureDetection(params martini.Params, r render.Rende
 	r.JSON(200, audits)
 }
 
+// ReadReplicationAnalysisChangelog lists instances and their analysis changelog
+func (this *HttpAPI) ReadReplicationAnalysisChangelog(params martini.Params, r render.Render, req *http.Request) {
+	changelogs, err := inst.ReadReplicationAnalysisChangelog()
+
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
+		return
+	}
+
+	r.JSON(200, changelogs)
+}
+
 // AuditRecovery provides list of topology-recovery entries
 func (this *HttpAPI) AuditRecovery(params martini.Params, r render.Render, req *http.Request) {
-	page, err := strconv.Atoi(params["page"])
-	if err != nil || page < 0 {
-		page = 0
+	var audits []logic.TopologyRecovery
+	var err error
+
+	if recoveryId, derr := strconv.ParseInt(params["id"], 10, 0); derr == nil && recoveryId > 0 {
+		audits, err = logic.ReadRecovery(recoveryId)
+	} else {
+		page, derr := strconv.Atoi(params["page"])
+		if derr != nil || page < 0 {
+			page = 0
+		}
+		unacknowledgedOnly := (req.URL.Query().Get("unacknowledged") == "true")
+		audits, err = logic.ReadRecentRecoveries(params["clusterName"], unacknowledgedOnly, page)
 	}
-	audits, err := logic.ReadRecentRecoveries(page)
 
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
@@ -1851,25 +2084,157 @@ func (this *HttpAPI) RecentlyActiveInstanceRecovery(params martini.Params, r ren
 	r.JSON(200, recoveries)
 }
 
+// ClusterInfo provides details of a given cluster
+func (this *HttpAPI) AcknowledgeClusterRecoveries(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+	if !isAuthorizedForAction(req, user) {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
+		return
+	}
+
+	clusterName := params["clusterName"]
+	if params["clusterAlias"] != "" {
+		var err error
+		clusterName, err = inst.GetClusterByAlias(params["clusterAlias"])
+		if err != nil {
+			r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
+			return
+		}
+	}
+
+	comment := req.URL.Query().Get("comment")
+	if comment == "" {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("No acknowledge comment given")})
+		return
+	}
+	userId := getUserId(req, user)
+	if userId == "" {
+		userId = inst.GetMaintenanceOwner()
+	}
+	countAcnowledgedRecoveries, err := logic.AcknowledgeClusterRecoveries(clusterName, userId, comment)
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
+		return
+	}
+
+	r.JSON(200, countAcnowledgedRecoveries)
+}
+
+// ClusterInfo provides details of a given cluster
+func (this *HttpAPI) AcknowledgeInstanceRecoveries(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+	if !isAuthorizedForAction(req, user) {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
+		return
+	}
+
+	instanceKey, err := this.getInstanceKey(params["host"], params["port"])
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+
+	comment := req.URL.Query().Get("comment")
+	if comment == "" {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("No acknowledge comment given")})
+		return
+	}
+	userId := getUserId(req, user)
+	if userId == "" {
+		userId = inst.GetMaintenanceOwner()
+	}
+	countAcnowledgedRecoveries, err := logic.AcknowledgeInstanceRecoveries(&instanceKey, userId, comment)
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
+		return
+	}
+
+	r.JSON(200, countAcnowledgedRecoveries)
+}
+
+// ClusterInfo provides details of a given cluster
+func (this *HttpAPI) AcknowledgeRecovery(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+	if !isAuthorizedForAction(req, user) {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
+		return
+	}
+
+	recoveryId, err := strconv.ParseInt(params["recoveryId"], 10, 0)
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+	comment := req.URL.Query().Get("comment")
+	if comment == "" {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("No acknowledge comment given")})
+		return
+	}
+	userId := getUserId(req, user)
+	if userId == "" {
+		userId = inst.GetMaintenanceOwner()
+	}
+	countAcnowledgedRecoveries, err := logic.AcknowledgeRecovery(recoveryId, userId, comment)
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
+		return
+	}
+
+	r.JSON(200, countAcnowledgedRecoveries)
+}
+
+// BlockedRecoveries reads list of currently blocked recoveries, optionally filtered by cluster name
+func (this *HttpAPI) BlockedRecoveries(params martini.Params, r render.Render, req *http.Request) {
+	blockedRecoveries, err := logic.ReadBlockedRecoveries(params["clusterName"])
+
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
+		return
+	}
+
+	r.JSON(200, blockedRecoveries)
+}
+
 // RegisterRequests makes for the de-facto list of known API calls
 func (this *HttpAPI) RegisterRequests(m *martini.ClassicMartini) {
-	// Instance meta
-	m.Get("/api/instance/:host/:port", this.Instance)
-	m.Get("/api/discover/:host/:port", this.Discover)
-	m.Get("/api/refresh/:host/:port", this.Refresh)
-	m.Get("/api/forget/:host/:port", this.Forget)
-	m.Get("/api/resolve/:host/:port", this.Resolve)
-	// Instance
-	m.Get("/api/last-pseudo-gtid/:host/:port", this.LastPseudoGTID)
-	m.Get("/api/begin-maintenance/:host/:port/:owner/:reason", this.BeginMaintenance)
-	m.Get("/api/end-maintenance/:host/:port", this.EndMaintenanceByInstanceKey)
-	m.Get("/api/end-maintenance/:maintenanceKey", this.EndMaintenance)
-	m.Get("/api/begin-downtime/:host/:port/:owner/:reason", this.BeginDowntime)
-	m.Get("/api/end-downtime/:host/:port", this.EndDowntime)
-	m.Get("/api/set-read-only/:host/:port", this.SetReadOnly)
-	m.Get("/api/set-writeable/:host/:port", this.SetWriteable)
-	m.Get("/api/kill-query/:host/:port/:process", this.KillQuery)
-	// Replication
+	// Smart relocation:
+	m.Get("/api/relocate/:host/:port/:belowHost/:belowPort", this.RelocateBelow)
+	m.Get("/api/relocate-below/:host/:port/:belowHost/:belowPort", this.RelocateBelow)
+	m.Get("/api/relocate-slaves/:host/:port/:belowHost/:belowPort", this.RelocateSlaves)
+	m.Get("/api/regroup-slaves/:host/:port", this.RegroupSlaves)
+
+	// Classic file:pos relocation:
+	m.Get("/api/move-up/:host/:port", this.MoveUp)
+	m.Get("/api/move-up-slaves/:host/:port", this.MoveUpSlaves)
+	m.Get("/api/move-below/:host/:port/:siblingHost/:siblingPort", this.MoveBelow)
+	m.Get("/api/move-equivalent/:host/:port/:belowHost/:belowPort", this.MoveEquivalent)
+	m.Get("/api/repoint-slaves/:host/:port", this.RepointSlaves)
+	m.Get("/api/make-co-master/:host/:port", this.MakeCoMaster)
+	m.Get("/api/enslave-siblings/:host/:port", this.EnslaveSiblings)
+	m.Get("/api/enslave-master/:host/:port", this.EnslaveMaster)
+	m.Get("/api/master-equivalent/:host/:port/:logFile/:logPos", this.MasterEquivalent)
+
+	// Binlog server relocation:
+	m.Get("/api/regroup-slaves-bls/:host/:port", this.RegroupSlavesBinlogServers)
+
+	// GTID relocation:
+	m.Get("/api/move-below-gtid/:host/:port/:belowHost/:belowPort", this.MoveBelowGTID)
+	m.Get("/api/move-slaves-gtid/:host/:port/:belowHost/:belowPort", this.MoveSlavesGTID)
+	m.Get("/api/regroup-slaves-gtid/:host/:port", this.RegroupSlavesGTID)
+
+	// Pseudo-GTID relocation:
+	m.Get("/api/match/:host/:port/:belowHost/:belowPort", this.MatchBelow)
+	m.Get("/api/match-below/:host/:port/:belowHost/:belowPort", this.MatchBelow)
+	m.Get("/api/match-up/:host/:port", this.MatchUp)
+	m.Get("/api/match-slaves/:host/:port/:belowHost/:belowPort", this.MultiMatchSlaves)
+	m.Get("/api/multi-match-slaves/:host/:port/:belowHost/:belowPort", this.MultiMatchSlaves)
+	m.Get("/api/match-up-slaves/:host/:port", this.MatchUpSlaves)
+	m.Get("/api/regroup-slaves-pgtid/:host/:port", this.RegroupSlavesPseudoGTID)
+	// Legacy, need to revisit:
+	m.Get("/api/make-master/:host/:port", this.MakeMaster)
+	m.Get("/api/make-local-master/:host/:port", this.MakeLocalMaster)
+
+	// Replication, general:
+	m.Get("/api/enable-gtid/:host/:port", this.EnableGTID)
+	m.Get("/api/disable-gtid/:host/:port", this.DisableGTID)
+	m.Get("/api/skip-query/:host/:port", this.SkipQuery)
 	m.Get("/api/start-slave/:host/:port", this.StartSlave)
 	m.Get("/api/restart-slave/:host/:port", this.RestartSlave)
 	m.Get("/api/stop-slave/:host/:port", this.StopSlave)
@@ -1877,52 +2242,91 @@ func (this *HttpAPI) RegisterRequests(m *martini.ClassicMartini) {
 	m.Get("/api/reset-slave/:host/:port", this.ResetSlave)
 	m.Get("/api/detach-slave/:host/:port", this.DetachSlave)
 	m.Get("/api/reattach-slave/:host/:port", this.ReattachSlave)
-	m.Get("/api/master-equivalent/:host/:port/:logFile/:logPos", this.MasterEquivalent)
-	m.Get("/api/skip-query/:host/:port", this.SkipQuery)
-	m.Get("/api/enable-gtid/:host/:port", this.EnableGTID)
-	m.Get("/api/disable-gtid/:host/:port", this.DisableGTID)
-	// Move
-	m.Get("/api/move-up/:host/:port", this.MoveUp)
-	m.Get("/api/move-up-slaves/:host/:port", this.MoveUpSlaves)
-	m.Get("/api/move-below/:host/:port/:siblingHost/:siblingPort", this.MoveBelow)
-	m.Get("/api/move-below-gtid/:host/:port/:belowHost/:belowPort", this.MoveBelowGTID)
-	m.Get("/api/move-slaves-gtid/:host/:port/:belowHost/:belowPort", this.MoveSlavesGTID)
-	m.Get("/api/move-equivalent/:host/:port/:belowHost/:belowPort", this.MoveEquivalent)
-	m.Get("/api/repoint-slaves/:host/:port", this.RepointSlaves)
-	m.Get("/api/make-co-master/:host/:port", this.MakeCoMaster)
-	m.Get("/api/enslave-siblings/:host/:port", this.EnslaveSiblings)
-	m.Get("/api/enslave-master/:host/:port", this.EnslaveMaster)
-	m.Get("/api/relocate/:host/:port/:belowHost/:belowPort", this.RelocateBelow)
-	m.Get("/api/relocate-below/:host/:port/:belowHost/:belowPort", this.RelocateBelow)
-	m.Get("/api/relocate-slaves/:host/:port/:belowHost/:belowPort", this.RelocateSlaves)
-	m.Get("/api/match/:host/:port/:belowHost/:belowPort", this.MatchBelow)
-	m.Get("/api/match-below/:host/:port/:belowHost/:belowPort", this.MatchBelow)
-	m.Get("/api/match-up/:host/:port", this.MatchUp)
-	m.Get("/api/match-slaves/:host/:port/:belowHost/:belowPort", this.MultiMatchSlaves)
-	m.Get("/api/multi-match-slaves/:host/:port/:belowHost/:belowPort", this.MultiMatchSlaves)
-	m.Get("/api/match-up-slaves/:host/:port", this.MatchUpSlaves)
-	m.Get("/api/regroup-slaves/:host/:port", this.RegroupSlaves)
-	m.Get("/api/regroup-slaves-gtid/:host/:port", this.RegroupSlavesGTID)
-	m.Get("/api/make-master/:host/:port", this.MakeMaster)
-	m.Get("/api/make-local-master/:host/:port", this.MakeLocalMaster)
+	m.Get("/api/reattach-slave-master-host/:host/:port", this.ReattachSlaveMasterHost)
+
+	// Instance:
+	m.Get("/api/set-read-only/:host/:port", this.SetReadOnly)
+	m.Get("/api/set-writeable/:host/:port", this.SetWriteable)
+	m.Get("/api/kill-query/:host/:port/:process", this.KillQuery)
+
+	// Binary logs:
+	m.Get("/api/last-pseudo-gtid/:host/:port", this.LastPseudoGTID)
+
+	// Pools:
+	m.Get("/api/submit-pool-instances/:pool", this.SubmitPoolInstances)
+	m.Get("/api/cluster-pool-instances/:clusterName", this.ReadClusterPoolInstancesMap)
+	m.Get("/api/cluster-pool-instances/:clusterName/:pool", this.ReadClusterPoolInstancesMap)
+	m.Get("/api/heuristic-cluster-pool-instances/:clusterName", this.GetHeuristicClusterPoolInstances)
+	m.Get("/api/heuristic-cluster-pool-instances/:clusterName/:pool", this.GetHeuristicClusterPoolInstances)
+	m.Get("/api/heuristic-cluster-pool-lag/:clusterName", this.GetHeuristicClusterPoolInstancesLag)
+	m.Get("/api/heuristic-cluster-pool-lag/:clusterName/:pool", this.GetHeuristicClusterPoolInstancesLag)
+
+	// Information:
+	m.Get("/api/search/:searchString", this.Search)
+	m.Get("/api/search", this.Search)
+
 	// Cluster
 	m.Get("/api/cluster/:clusterName", this.Cluster)
 	m.Get("/api/cluster/alias/:clusterAlias", this.ClusterByAlias)
+	m.Get("/api/cluster/instance/:host/:port", this.ClusterByInstance)
 	m.Get("/api/cluster-info/:clusterName", this.ClusterInfo)
 	m.Get("/api/cluster-info/alias/:clusterAlias", this.ClusterInfoByAlias)
 	m.Get("/api/cluster-osc-slaves/:clusterName", this.ClusterOSCSlaves)
 	m.Get("/api/set-cluster-alias/:clusterName", this.SetClusterAlias)
 	m.Get("/api/clusters", this.Clusters)
 	m.Get("/api/clusters-info", this.ClustersInfo)
+
+	// Instance management:
+	m.Get("/api/instance/:host/:port", this.Instance)
+	m.Get("/api/discover/:host/:port", this.Discover)
+	m.Get("/api/refresh/:host/:port", this.Refresh)
+	m.Get("/api/forget/:host/:port", this.Forget)
+	m.Get("/api/begin-maintenance/:host/:port/:owner/:reason", this.BeginMaintenance)
+	m.Get("/api/end-maintenance/:host/:port", this.EndMaintenanceByInstanceKey)
+	m.Get("/api/end-maintenance/:maintenanceKey", this.EndMaintenance)
+	m.Get("/api/begin-downtime/:host/:port/:owner/:reason", this.BeginDowntime)
+	m.Get("/api/begin-downtime/:host/:port/:owner/:reason/:duration", this.BeginDowntime)
+	m.Get("/api/end-downtime/:host/:port", this.EndDowntime)
+
+	// Recovery:
+	m.Get("/api/replication-analysis", this.ReplicationAnalysis)
+	m.Get("/api/replication-analysis/:clusterName", this.ReplicationAnalysis)
+	m.Get("/api/recover/:host/:port", this.Recover)
+	m.Get("/api/recover/:host/:port/:candidateHost/:candidatePort", this.Recover)
+	m.Get("/api/recover-lite/:host/:port", this.RecoverLite)
+	m.Get("/api/recover-lite/:host/:port/:candidateHost/:candidatePort", this.RecoverLite)
+	m.Get("/api/register-candidate/:host/:port/:promotionRule", this.RegisterCandidate)
+	m.Get("/api/automated-recovery-filters", this.AutomatedRecoveryFilters)
+	m.Get("/api/audit-failure-detection", this.AuditFailureDetection)
+	m.Get("/api/audit-failure-detection/:page", this.AuditFailureDetection)
+	m.Get("/api/audit-failure-detection/id/:id", this.AuditFailureDetection)
+	m.Get("/api/replication-analysis-changelog", this.ReadReplicationAnalysisChangelog)
+	m.Get("/api/audit-recovery", this.AuditRecovery)
+	m.Get("/api/audit-recovery/:page", this.AuditRecovery)
+	m.Get("/api/audit-recovery/id/:id", this.AuditRecovery)
+	m.Get("/api/audit-recovery/cluster/:clusterName", this.AuditRecovery)
+	m.Get("/api/audit-recovery/cluster/:clusterName/:page", this.AuditRecovery)
+	m.Get("/api/active-cluster-recovery/:clusterName", this.ActiveClusterRecovery)
+	m.Get("/api/recently-active-cluster-recovery/:clusterName", this.RecentlyActiveClusterRecovery)
+	m.Get("/api/recently-active-instance-recovery/:host/:port", this.RecentlyActiveInstanceRecovery)
+	m.Get("/api/ack-recovery/cluster/:clusterName", this.AcknowledgeClusterRecoveries)
+	m.Get("/api/ack-recovery/cluster/alias/:clusterAlias", this.AcknowledgeClusterRecoveries)
+	m.Get("/api/ack-recovery/instance/:host/:port", this.AcknowledgeInstanceRecoveries)
+	m.Get("/api/ack-recovery/:recoveryId", this.AcknowledgeRecovery)
+	m.Get("/api/blocked-recoveries", this.BlockedRecoveries)
+	m.Get("/api/blocked-recoveries/cluster/:clusterName", this.BlockedRecoveries)
+
 	// General
-	m.Get("/api/search/:searchString", this.Search)
-	m.Get("/api/search", this.Search)
 	m.Get("/api/problems", this.Problems)
 	m.Get("/api/problems/:clusterName", this.Problems)
 	m.Get("/api/long-queries", this.LongQueries)
 	m.Get("/api/long-queries/:filter", this.LongQueries)
 	m.Get("/api/audit", this.Audit)
 	m.Get("/api/audit/:page", this.Audit)
+	m.Get("/api/audit/instance/:host/:port", this.Audit)
+	m.Get("/api/audit/instance/:host/:port/:page", this.Audit)
+	m.Get("/api/resolve/:host/:port", this.Resolve)
+
 	// Meta
 	m.Get("/api/maintenance", this.Maintenance)
 	m.Get("/api/headers", this.Headers)
@@ -1934,23 +2338,7 @@ func (this *HttpAPI) RegisterRequests(m *martini.ClassicMartini) {
 	m.Get("/api/reload-cluster-alias", this.ReloadClusterAlias)
 	m.Get("/api/hostname-resolve-cache", this.HostnameResolveCache)
 	m.Get("/api/reset-hostname-resolve-cache", this.ResetHostnameResolveCache)
-	// Pool
-	m.Get("/api/submit-pool-instances/:pool", this.SubmitPoolInstances)
-	m.Get("/api/cluster-pool-instances/:clusterName", this.ReadClusterPoolInstances)
-	// Recovery
-	m.Get("/api/replication-analysis", this.ReplicationAnalysis)
-	m.Get("/api/recover/:host/:port", this.Recover)
-	m.Get("/api/recover/:host/:port/:candidateHost/:candidatePort", this.Recover)
-	m.Get("/api/recover-lite/:host/:port", this.RecoverLite)
-	m.Get("/api/recover-lite/:host/:port/:candidateHost/:candidatePort", this.RecoverLite)
-	m.Get("/api/automated-recovery-filters", this.AutomatedRecoveryFilters)
-	m.Get("/api/audit-failure-detection", this.AuditFailureDetection)
-	m.Get("/api/audit-failure-detection/:page", this.AuditFailureDetection)
-	m.Get("/api/audit-recovery", this.AuditRecovery)
-	m.Get("/api/audit-recovery/:page", this.AuditRecovery)
-	m.Get("/api/active-cluster-recovery/:clusterName", this.ActiveClusterRecovery)
-	m.Get("/api/recently-active-cluster-recovery/:clusterName", this.RecentlyActiveClusterRecovery)
-	m.Get("/api/recently-active-instance-recovery/:host/:port", this.RecentlyActiveInstanceRecovery)
+
 	// Agents
 	m.Get("/api/agents", this.Agents)
 	m.Get("/api/agent/:host", this.Agent)
@@ -1967,4 +2355,7 @@ func (this *HttpAPI) RegisterRequests(m *martini.ClassicMartini) {
 	m.Get("/api/agent-seed-states/:seedId", this.AgentSeedStates)
 	m.Get("/api/agent-abort-seed/:seedId", this.AbortSeed)
 	m.Get("/api/seeds", this.Seeds)
+
+	// Configurable status check endpoint
+	m.Get(config.Config.StatusEndpoint, this.StatusCheck)
 }

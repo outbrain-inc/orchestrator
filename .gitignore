@@ -1,4 +1,5 @@
 conf/orchestrator.conf.json
+.DS_Store
 .vagrant/
 vagrant/admin-post-install.sh
 vagrant/db-post-install.sh
@@ -8,3 +9,4 @@ vagrant/db3-post-install.sh
 vagrant/db4-post-install.sh
 vagrant/vagrant-ssh-key
 vagrant/vagrant-ssh-key.pub
+Godeps/_workspace

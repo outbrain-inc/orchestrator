@@ -48,13 +48,8 @@ func readResponse(res *http.Response, err error) ([]byte, error) {
 
 // SetHostAttributes
 func SetHostAttributes(hostname string, attributeName string, attributeValue string) error {
-	db, err := db.OpenOrchestrator()
-	if err != nil {
-		return log.Errore(err)
-	}
-
-	_, err = sqlutils.Exec(db, `
-			replace 
+	_, err := db.ExecOrchestrator(`
+			replace
 				into host_attributes (
 					hostname, attribute_name, attribute_value, submit_timestamp, expire_timestamp
 				) VALUES (
@@ -72,27 +67,23 @@ func SetHostAttributes(hostname string, attributeName string, attributeValue str
 	return err
 }
 
-func getHostAttributesByClause(whereClause string) ([]HostAttributes, error) {
+func getHostAttributesByClause(whereClause string, args []interface{}) ([]HostAttributes, error) {
 	res := []HostAttributes{}
 	query := fmt.Sprintf(`
-		select 
-			hostname, 
-			attribute_name, 
+		select
+			hostname,
+			attribute_name,
 			attribute_value,
 			submit_timestamp ,
-			ifnull(expire_timestamp, '') as expire_timestamp  
-		from 
+			ifnull(expire_timestamp, '') as expire_timestamp
+		from
 			host_attributes
 		%s
 		order by
 			hostname, attribute_name
 		`, whereClause)
-	db, err := db.OpenOrchestrator()
-	if err != nil {
-		goto Cleanup
-	}
 
-	err = sqlutils.QueryRowsMap(db, query, func(m sqlutils.RowMap) error {
+	err := db.QueryOrchestrator(query, args, func(m sqlutils.RowMap) error {
 		hostAttributes := HostAttributes{}
 		hostAttributes.Hostname = m.GetString("hostname")
 		hostAttributes.AttributeName = m.GetString("attribute_name")
@@ -103,7 +94,6 @@ func getHostAttributesByClause(whereClause string) ([]HostAttributes, error) {
 		res = append(res, hostAttributes)
 		return nil
 	})
-Cleanup:
 
 	if err != nil {
 		log.Errore(err)
@@ -114,30 +104,61 @@ Cleanup:
 // GetHostAttributesByMatch
 func GetHostAttributesByMatch(hostnameMatch string, attributeNameMatch string, attributeValueMatch string) ([]HostAttributes, error) {
 	terms := []string{}
+	args := sqlutils.Args()
 	if hostnameMatch != "" {
-		terms = append(terms, fmt.Sprintf(" hostname rlike '%s' ", hostnameMatch))
+		terms = append(terms, ` hostname rlike ? `)
+		args = append(args, hostnameMatch)
 	}
 	if attributeNameMatch != "" {
-		terms = append(terms, fmt.Sprintf(" attribute_name rlike '%s' ", attributeNameMatch))
+		terms = append(terms, ` attribute_name rlike ? `)
+		args = append(args, attributeNameMatch)
 	}
 	if attributeValueMatch != "" {
-		terms = append(terms, fmt.Sprintf(" attribute_value rlike '%s' ", attributeValueMatch))
+		terms = append(terms, ` attribute_value rlike ? `)
+		args = append(args, attributeValueMatch)
 	}
 
 	if len(terms) == 0 {
-		return getHostAttributesByClause("")
+		return getHostAttributesByClause("", args)
 	}
 	whereCondition := fmt.Sprintf(" where %s ", strings.Join(terms, " and "))
 
-	return getHostAttributesByClause(whereCondition)
+	return getHostAttributesByClause(whereCondition, args)
 }
 
-// GetHostAttributesByMatch
+// GetHostAttribute expects to return a single attribute for a given hostname/attribute-name combination
+// or error on empty result
+func GetHostAttribute(hostname string, attributeName string) (string, error) {
+	whereClause := `where hostname=? and attribute_name=?`
+	attributes, err := getHostAttributesByClause(whereClause, sqlutils.Args(hostname, attributeName))
+	if err != nil {
+		return "", err
+	}
+	if len(attributeName) == 0 {
+		return "", log.Errorf("No attribute found for %+v, %+v", hostname, attributeName)
+	}
+	return attributes[0].AttributeValue, nil
+}
+
+// SetGeneralAttribute sets an attribute not associated with a host. Its a key-value thing
+func SetGeneralAttribute(attributeName string, attributeValue string) error {
+	if attributeName == "" {
+		return nil
+	}
+	return SetHostAttributes("*", attributeName, attributeValue)
+}
+
+// GetGeneralAttribute expects to return a single attribute value (not associated with a specific hostname)
+func GetGeneralAttribute(attributeName string) (result string, err error) {
+	return GetHostAttribute("*", attributeName)
+}
+
+// GetHostAttributesByAttribute
 func GetHostAttributesByAttribute(attributeName string, valueMatch string) ([]HostAttributes, error) {
 	if valueMatch == "" {
 		valueMatch = ".?"
 	}
-	whereClause := fmt.Sprintf(" where attribute_name = '%s' and attribute_value rlike '%s'", attributeName, valueMatch)
+	whereClause := ` where attribute_name = ? and attribute_value rlike ?`
 
-	return getHostAttributesByClause(whereClause)
+	return getHostAttributesByClause(whereClause, sqlutils.Args(attributeName, valueMatch))
 }

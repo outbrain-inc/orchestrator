@@ -17,55 +17,16 @@
 package inst
 
 import (
-	"fmt"
 	"github.com/outbrain/golib/log"
-	"github.com/outbrain/golib/sqlutils"
 	"github.com/outbrain/orchestrator/go/config"
 	"github.com/outbrain/orchestrator/go/db"
 )
 
-// ReadClusterDomainName reads the domain name associated with a cluster, if any
-func ReadClusterDomainName(clusterName string) (string, error) {
-	domainName := ""
-	query := fmt.Sprintf(`
-		select 
-			domain_name
-		from 
-			cluster_domain_name
-		where
-			cluster_name = '%s'
-		`, clusterName)
-	db, err := db.OpenOrchestrator()
-	if err != nil {
-		goto Cleanup
-	}
-
-	err = sqlutils.QueryRowsMap(db, query, func(m sqlutils.RowMap) error {
-		domainName = m.GetString("domain_name")
-		return nil
-	})
-Cleanup:
-
-	if err != nil {
-		return "", err
-	}
-	if domainName == "" {
-		err = fmt.Errorf("No domain name found for cluster %s", clusterName)
-	}
-	return domainName, err
-
-}
-
 // WriteClusterDomainName will write (and override) the domain name of a cluster
 func WriteClusterDomainName(clusterName string, domainName string) error {
 	writeFunc := func() error {
-		db, err := db.OpenOrchestrator()
-		if err != nil {
-			return log.Errore(err)
-		}
-
-		_, err = sqlutils.Exec(db, `
-			insert into  
+		_, err := db.ExecOrchestrator(`
+			insert into
 					cluster_domain_name (cluster_name, domain_name, last_registered)
 				values
 					(?, ?, NOW())
@@ -73,13 +34,8 @@ func WriteClusterDomainName(clusterName string, domainName string) error {
 					domain_name=values(domain_name),
 					last_registered=values(last_registered)
 			`,
-			clusterName,
-			domainName)
-		if err != nil {
-			return log.Errore(err)
-		}
-
-		return nil
+			clusterName, domainName)
+		return log.Errore(err)
 	}
 	return ExecDBWriteFunc(writeFunc)
 }
@@ -88,7 +44,7 @@ func WriteClusterDomainName(clusterName string, domainName string) error {
 func ExpireClusterDomainName() error {
 	writeFunc := func() error {
 		_, err := db.ExecOrchestrator(`
-        	delete from cluster_domain_name 
+    	delete from cluster_domain_name
 				where last_registered < NOW() - INTERVAL ? MINUTE
 				`, config.Config.ExpiryHostnameResolvesMinutes,
 		)

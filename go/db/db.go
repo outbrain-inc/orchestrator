@@ -17,16 +17,34 @@
 package db
 
 import (
+	"crypto/tls"
 	"database/sql"
 	"fmt"
-	_ "github.com/go-sql-driver/mysql"
+
+	"github.com/go-sql-driver/mysql"
 	"github.com/outbrain/golib/log"
 	"github.com/outbrain/golib/sqlutils"
 	"github.com/outbrain/orchestrator/go/config"
+	"github.com/outbrain/orchestrator/go/ssl"
 )
 
-// generateSQL & generateSQLPatches are lists of SQL statements required to build the orchestrator backend
-var generateSQL = []string{
+var (
+	EmptyArgs []interface{}
+)
+
+type DummySqlResult struct {
+}
+
+func (this DummySqlResult) LastInsertId() (int64, error) {
+	return 0, nil
+}
+
+func (this DummySqlResult) RowsAffected() (int64, error) {
+	return 1, nil
+}
+
+// generateSQLBase & generateSQLPatches are lists of SQL statements required to build the orchestrator backend
+var generateSQLBase = []string{
 	`
         CREATE TABLE IF NOT EXISTS database_instance (
           hostname varchar(128) CHARACTER SET ascii NOT NULL,
@@ -102,7 +120,7 @@ var generateSQL = []string{
           PRIMARY KEY (audit_id),
           KEY audit_timestamp_idx (audit_timestamp),
           KEY host_port_idx (hostname, port, audit_timestamp)
-        ) ENGINE=InnoDB DEFAULT CHARSET=latin1 
+        ) ENGINE=InnoDB DEFAULT CHARSET=latin1
 	`,
 	`
 		CREATE TABLE IF NOT EXISTS host_agent (
@@ -346,86 +364,222 @@ var generateSQL = []string{
           KEY last_suggested_idx(last_suggested)
         ) ENGINE=InnoDB DEFAULT CHARSET=ascii
 	`,
+	`
+		CREATE TABLE IF NOT EXISTS async_request (
+		  request_id bigint unsigned NOT NULL AUTO_INCREMENT,
+		  command varchar(128) charset ascii not null,
+		  hostname varchar(128) NOT NULL,
+		  port smallint(5) unsigned NOT NULL,
+		  destination_hostname varchar(128) NOT NULL,
+		  destination_port smallint(5) unsigned NOT NULL,
+		  pattern text CHARACTER SET utf8 NOT NULL,
+		  gtid_hint varchar(32) charset ascii not null,
+		  begin_timestamp timestamp NULL DEFAULT NULL,
+		  end_timestamp timestamp NULL DEFAULT NULL,
+		  story text CHARACTER SET utf8 NOT NULL,
+		  PRIMARY KEY (request_id),
+		  KEY begin_timestamp_idx (begin_timestamp),
+		  KEY end_timestamp_idx (end_timestamp)
+		) ENGINE=InnoDB DEFAULT CHARSET=ascii
+	`,
+	`
+		CREATE TABLE IF NOT EXISTS blocked_topology_recovery (
+		  hostname varchar(128) NOT NULL,
+		  port smallint(5) unsigned NOT NULL,
+		  cluster_name varchar(128) NOT NULL,
+		  analysis varchar(128) NOT NULL,
+		  last_blocked_timestamp timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		  blocking_recovery_id bigint unsigned,
+		  PRIMARY KEY (hostname, port),
+		  KEY cluster_blocked_idx (cluster_name, last_blocked_timestamp)
+		) ENGINE=InnoDB CHARSET=ascii
+	`,
+	`
+		CREATE TABLE IF NOT EXISTS database_instance_last_analysis (
+		  hostname varchar(128) NOT NULL,
+		  port smallint(5) unsigned NOT NULL,
+		  analysis_timestamp timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		  analysis varchar(128) NOT NULL,
+		  PRIMARY KEY (hostname, port),
+		  KEY analysis_timestamp_idx(analysis_timestamp)
+		) ENGINE=InnoDB DEFAULT CHARSET=ascii
+	`,
+	`
+		CREATE TABLE IF NOT EXISTS database_instance_analysis_changelog (
+          changelog_id bigint unsigned not null auto_increment,
+		  hostname varchar(128) NOT NULL,
+		  port smallint(5) unsigned NOT NULL,
+		  analysis_timestamp timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		  analysis varchar(128) NOT NULL,
+		  PRIMARY KEY (changelog_id),
+		  KEY analysis_timestamp_idx(analysis_timestamp)
+		) ENGINE=InnoDB DEFAULT CHARSET=ascii
+	`,
+	`
+		CREATE TABLE IF NOT EXISTS node_health_history (
+		  history_id bigint unsigned not null auto_increment,
+		  hostname varchar(128) CHARACTER SET ascii NOT NULL,
+		  token varchar(128) NOT NULL,
+		  first_seen_active timestamp NOT NULL,
+		  extra_info varchar(128) CHARACTER SET utf8 NOT NULL,
+		  PRIMARY KEY (history_id),
+		  UNIQUE KEY hostname_token_idx(hostname, token),
+		  KEY first_seen_active_idx(first_seen_active)
+		) ENGINE=InnoDB DEFAULT CHARSET=ascii
+	`,
+	`
+		CREATE TABLE IF NOT EXISTS database_instance_coordinates_history (
+          history_id bigint unsigned not null auto_increment,
+		  hostname varchar(128) NOT NULL,
+		  port smallint(5) unsigned NOT NULL,
+		  recorded_timestamp timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		  binary_log_file varchar(128) NOT NULL,
+		  binary_log_pos bigint(20) unsigned NOT NULL,
+		  relay_log_file varchar(128) NOT NULL,
+		  relay_log_pos bigint(20) unsigned NOT NULL,
+		  PRIMARY KEY (history_id),
+		  KEY hostname_port_recorded_timestmp_idx (hostname, port, recorded_timestamp),
+		  KEY recorded_timestmp_idx (recorded_timestamp)
+		) ENGINE=InnoDB DEFAULT CHARSET=ascii
+	`,
+	`
+		CREATE TABLE IF NOT EXISTS database_instance_binlog_files_history (
+          history_id bigint unsigned not null auto_increment,
+		  hostname varchar(128) NOT NULL,
+		  port smallint(5) unsigned NOT NULL,
+		  binary_log_file varchar(128) NOT NULL,
+		  binary_log_pos bigint(20) unsigned NOT NULL,
+		  first_seen timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		  last_seen timestamp NOT NULL DEFAULT '1971-01-01 00:00:00',
+		  PRIMARY KEY (history_id),
+		  UNIQUE KEY hostname_port_file_idx (hostname, port, binary_log_file),
+		  KEY last_seen_idx (last_seen)
+		) ENGINE=InnoDB DEFAULT CHARSET=ascii
+	`,
+	`
+	  CREATE TABLE IF NOT EXISTS access_token (
+	    access_token_id bigint unsigned not null auto_increment,
+	    public_token varchar(128) NOT NULL,
+	    secret_token varchar(128) NOT NULL,
+	    generated_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	    generated_by varchar(128) CHARACTER SET utf8 NOT NULL,
+			is_acquired tinyint unsigned NOT NULL DEFAULT '0',
+	    PRIMARY KEY (access_token_id),
+	    UNIQUE KEY public_token_idx (public_token),
+	    KEY generated_at_idx (generated_at)
+	  ) ENGINE=InnoDB DEFAULT CHARSET=ascii
+	`,
+	`
+		CREATE TABLE IF NOT EXISTS database_instance_recent_relaylog_history (
+		  hostname varchar(128) NOT NULL,
+		  port smallint(5) unsigned NOT NULL,
+			current_relay_log_file varchar(128) NOT NULL,
+		  current_relay_log_pos bigint(20) unsigned NOT NULL,
+			current_seen timestamp NOT NULL DEFAULT '1971-01-01 00:00:00',
+			prev_relay_log_file varchar(128) NOT NULL,
+		  prev_relay_log_pos bigint(20) unsigned NOT NULL,
+			prev_seen timestamp NOT NULL DEFAULT '1971-01-01 00:00:00',
+			PRIMARY KEY (hostname, port),
+		  KEY current_seen_idx (current_seen)
+		) ENGINE=InnoDB DEFAULT CHARSET=ascii
+	`,
+	`
+		CREATE TABLE IF NOT EXISTS orchestrator_metadata (
+		  anchor tinyint unsigned NOT NULL,
+		  last_deployed_version varchar(128) CHARACTER SET ascii NOT NULL,
+		  last_deployed_timestamp timestamp NOT NULL,
+		  PRIMARY KEY (anchor)
+		) ENGINE=InnoDB DEFAULT CHARSET=ascii
+	`,
+	`
+		CREATE TABLE IF NOT EXISTS orchestrator_db_deployments (
+		  deployed_version varchar(128) CHARACTER SET ascii NOT NULL,
+		  deployed_timestamp timestamp NOT NULL,
+		  PRIMARY KEY (deployed_version)
+		) ENGINE=InnoDB DEFAULT CHARSET=ascii
+	`,
 }
 
+// generateSQLPatches contains DDLs for patching schema to the latest version.
+// Add new statements at the end of the list so they form a changelog.
 var generateSQLPatches = []string{
 	`
-		ALTER TABLE 
+		ALTER TABLE
 			database_instance
 			ADD COLUMN read_only TINYINT UNSIGNED NOT NULL AFTER version
 	`,
 	`
-		ALTER TABLE 
+		ALTER TABLE
 			database_instance
 			ADD COLUMN last_sql_error TEXT NOT NULL AFTER exec_master_log_pos
 	`,
 	`
-		ALTER TABLE 
+		ALTER TABLE
 			database_instance
 			ADD COLUMN last_io_error TEXT NOT NULL AFTER last_sql_error
 	`,
 	`
-		ALTER TABLE 
+		ALTER TABLE
 			database_instance
 			ADD COLUMN last_attempted_check TIMESTAMP AFTER last_checked
 	`,
 	`
-		ALTER TABLE 
+		ALTER TABLE
 			database_instance
 			ADD COLUMN oracle_gtid TINYINT UNSIGNED NOT NULL AFTER slave_io_running
 	`,
 	`
-		ALTER TABLE 
+		ALTER TABLE
 			database_instance
 			ADD COLUMN mariadb_gtid TINYINT UNSIGNED NOT NULL AFTER oracle_gtid
 	`,
 	`
-		ALTER TABLE 
+		ALTER TABLE
 			database_instance
 			ADD COLUMN relay_log_file varchar(128) CHARACTER SET ascii NOT NULL AFTER exec_master_log_pos
 	`,
 	`
-		ALTER TABLE 
+		ALTER TABLE
 			database_instance
 			ADD COLUMN relay_log_pos bigint unsigned NOT NULL AFTER relay_log_file
 	`,
 	`
-		ALTER TABLE 
+		ALTER TABLE
 			database_instance
 			ADD INDEX master_host_port_idx (master_host, master_port)
 	`,
 	`
-		ALTER TABLE 
+		ALTER TABLE
 			database_instance
 			ADD COLUMN pseudo_gtid TINYINT UNSIGNED NOT NULL AFTER mariadb_gtid
 	`,
 	`
-		ALTER TABLE 
+		ALTER TABLE
 			database_instance
 			ADD COLUMN replication_depth TINYINT UNSIGNED NOT NULL AFTER cluster_name
 	`,
 	`
-		ALTER TABLE 
+		ALTER TABLE
 			database_instance
 			ADD COLUMN has_replication_filters TINYINT UNSIGNED NOT NULL AFTER slave_io_running
 	`,
 	`
-		ALTER TABLE 
+		ALTER TABLE
 			database_instance
 			ADD COLUMN data_center varchar(32) CHARACTER SET ascii NOT NULL AFTER cluster_name
 	`,
 	`
-		ALTER TABLE 
+		ALTER TABLE
 			database_instance
 			ADD COLUMN physical_environment varchar(32) CHARACTER SET ascii NOT NULL AFTER data_center
 	`,
 	`
-		ALTER TABLE 
+		ALTER TABLE
 			database_instance_maintenance
 			ADD KEY active_timestamp_idx (maintenance_active, begin_timestamp)
 	`,
 	`
-		ALTER TABLE 
+		ALTER TABLE
 			database_instance
 			ADD COLUMN uptime INT UNSIGNED NOT NULL AFTER last_seen
 	`,
@@ -435,22 +589,22 @@ var generateSQLPatches = []string{
 			ADD UNIQUE KEY alias_uidx (alias)
 	`,
 	`
-		ALTER TABLE 
+		ALTER TABLE
 			database_instance
 			ADD COLUMN is_co_master TINYINT UNSIGNED NOT NULL AFTER replication_depth
 	`,
 	`
-		ALTER TABLE 
+		ALTER TABLE
 			database_instance_maintenance
 			ADD KEY active_end_timestamp_idx (maintenance_active, end_timestamp)
 	`,
 	`
-		ALTER TABLE 
+		ALTER TABLE
 			database_instance
 			ADD COLUMN sql_delay INT UNSIGNED NOT NULL AFTER slave_lag_seconds
 	`,
 	`
-		ALTER TABLE 
+		ALTER TABLE
 			topology_recovery
 			ADD COLUMN analysis              varchar(128) CHARACTER SET ascii NOT NULL,
 			ADD COLUMN cluster_name          varchar(128) CHARACTER SET ascii NOT NULL,
@@ -472,7 +626,7 @@ var generateSQLPatches = []string{
 			ADD KEY end_recovery_idx (end_recovery)
 	`,
 	`
-		ALTER TABLE 
+		ALTER TABLE
 			database_instance
 			ADD COLUMN binlog_server TINYINT UNSIGNED NOT NULL AFTER version
 	`,
@@ -482,64 +636,379 @@ var generateSQLPatches = []string{
 			ADD KEY last_registered_idx (last_registered)
 	`,
 	`
-		ALTER TABLE 
+		ALTER TABLE
 			database_instance
 			ADD COLUMN supports_oracle_gtid TINYINT UNSIGNED NOT NULL AFTER oracle_gtid
 	`,
 	`
-		ALTER TABLE 
+		ALTER TABLE
 			database_instance
 			ADD COLUMN executed_gtid_set text CHARACTER SET ascii NOT NULL AFTER oracle_gtid
 	`,
+	`
+		ALTER TABLE
+			database_instance
+			ADD COLUMN server_uuid varchar(64) CHARACTER SET ascii NOT NULL AFTER server_id
+	`,
+	`
+		ALTER TABLE
+			database_instance
+			ADD COLUMN suggested_cluster_alias varchar(128) CHARACTER SET ascii NOT NULL AFTER cluster_name
+	`,
+	`
+		ALTER TABLE cluster_alias
+			ADD COLUMN last_registered TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			ADD KEY last_registered_idx (last_registered)
+	`,
+	`
+		ALTER TABLE
+			topology_recovery
+			ADD COLUMN is_successful TINYINT UNSIGNED NOT NULL DEFAULT 0 AFTER processcing_node_token
+	`,
+	`
+		ALTER TABLE
+			topology_recovery
+			ADD COLUMN acknowledged TINYINT UNSIGNED NOT NULL DEFAULT 0,
+			ADD COLUMN acknowledged_by varchar(128) CHARACTER SET utf8 NOT NULL,
+			ADD COLUMN acknowledge_comment text CHARACTER SET utf8 NOT NULL
+	`,
+	`
+		ALTER TABLE
+			topology_recovery
+			ADD COLUMN participating_instances text CHARACTER SET ascii NOT NULL after slave_hosts,
+			ADD COLUMN lost_slaves text CHARACTER SET ascii NOT NULL after participating_instances,
+			ADD COLUMN all_errors text CHARACTER SET ascii NOT NULL after lost_slaves
+	`,
+	`
+		ALTER TABLE audit
+			ADD COLUMN cluster_name varchar(128) CHARACTER SET ascii NOT NULL DEFAULT '' AFTER port
+	`,
+	`
+		ALTER TABLE candidate_database_instance
+			ADD COLUMN priority TINYINT SIGNED NOT NULL DEFAULT 1 comment 'positive promote, nagative unpromotes'
+	`,
+	`
+		ALTER TABLE
+			topology_recovery
+			ADD COLUMN acknowledged_at TIMESTAMP NULL after acknowledged,
+			ADD KEY acknowledged_idx (acknowledged, acknowledged_at)
+	`,
+	`
+		ALTER TABLE
+			blocked_topology_recovery
+			ADD KEY last_blocked_idx (last_blocked_timestamp)
+	`,
+	`
+		ALTER TABLE candidate_database_instance
+			ADD COLUMN promotion_rule enum('must', 'prefer', 'neutral', 'prefer_not', 'must_not') NOT NULL DEFAULT 'neutral'
+	`,
+	`
+		ALTER TABLE node_health
+			DROP PRIMARY KEY,
+			ADD PRIMARY KEY (hostname, token)
+	`,
+	`
+		ALTER TABLE node_health
+			ADD COLUMN extra_info varchar(128) CHARACTER SET utf8 NOT NULL
+	`,
+	`
+		ALTER TABLE agent_seed
+			MODIFY end_timestamp timestamp NOT NULL DEFAULT '1971-01-01 00:00:00'
+	`,
+	`
+		ALTER TABLE active_node
+			MODIFY last_seen_active timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+	`,
+
+	`
+		ALTER TABLE node_health
+			MODIFY last_seen_active timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+	`,
+	`
+		ALTER TABLE candidate_database_instance
+			MODIFY last_suggested timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+	`,
+	`
+		ALTER TABLE master_position_equivalence
+			MODIFY last_suggested timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+	`,
+	`
+		ALTER TABLE
+			database_instance
+			ADD COLUMN last_attempted_check TIMESTAMP NOT NULL DEFAULT '1971-01-01 00:00:00' AFTER last_checked
+	`,
+	`
+		ALTER TABLE
+			database_instance
+			MODIFY last_attempted_check TIMESTAMP NOT NULL DEFAULT '1971-01-01 00:00:00'
+	`,
+	`
+		ALTER TABLE
+			database_instance_analysis_changelog
+			ADD KEY instance_timestamp_idx (hostname, port, analysis_timestamp)
+	`,
+	`
+		ALTER TABLE
+			topology_recovery
+			ADD COLUMN last_detection_id bigint unsigned NOT NULL,
+			ADD KEY last_detection_idx (last_detection_id)
+	`,
+	`
+		ALTER TABLE node_health_history
+			ADD COLUMN command varchar(128) CHARACTER SET utf8 NOT NULL
+	`,
+	`
+		ALTER TABLE node_health
+			ADD COLUMN command varchar(128) CHARACTER SET utf8 NOT NULL
+	`,
+	`
+		ALTER TABLE database_instance_topology_history
+			ADD COLUMN version varchar(128) CHARACTER SET ascii NOT NULL
+	`,
+	`
+		ALTER TABLE
+			database_instance
+			ADD COLUMN gtid_purged text CHARACTER SET ascii NOT NULL AFTER executed_gtid_set
+	`,
+	`
+		ALTER TABLE
+			database_instance_coordinates_history
+			ADD COLUMN last_seen timestamp NOT NULL DEFAULT '1971-01-01 00:00:00' AFTER recorded_timestamp
+	`,
+	`
+		ALTER TABLE
+			access_token
+			ADD COLUMN is_reentrant TINYINT UNSIGNED NOT NULL default 0
+	`,
+	`
+		ALTER TABLE
+			access_token
+			ADD COLUMN acquired_at timestamp NOT NULL DEFAULT '1971-01-01 00:00:00'
+	`,
+	`
+		ALTER TABLE
+			database_instance_pool
+			ADD COLUMN registered_at timestamp NOT NULL DEFAULT '1971-01-01 00:00:00'
+	`,
+	`
+		ALTER TABLE
+			database_instance
+			ADD COLUMN replication_credentials_available TINYINT UNSIGNED NOT NULL
+	`,
+	`
+		ALTER TABLE
+			database_instance
+			ADD COLUMN has_replication_credentials TINYINT UNSIGNED NOT NULL
+	`,
+	`
+		ALTER TABLE
+			database_instance
+			ADD COLUMN allow_tls TINYINT UNSIGNED NOT NULL AFTER sql_delay
+	`,
+	`
+		ALTER TABLE
+			database_instance
+			ADD COLUMN semi_sync_enforced TINYINT UNSIGNED NOT NULL AFTER physical_environment
+	`,
+	`
+		ALTER TABLE
+			database_instance
+			ADD COLUMN instance_alias varchar(128) CHARACTER SET ascii NOT NULL AFTER physical_environment
+	`,
+	`
+		ALTER TABLE
+			topology_recovery
+			ADD COLUMN successor_alias varchar(128) DEFAULT NULL
+	`,
 }
+
+// Track if a TLS has already been configured for topology
+var topologyTLSConfigured bool = false
+
+// Track if a TLS has already been configured for Orchestrator
+var orchestratorTLSConfigured bool = false
 
 // OpenTopology returns a DB instance to access a topology instance
 func OpenTopology(host string, port int) (*sql.DB, error) {
 	mysql_uri := fmt.Sprintf("%s:%s@tcp(%s:%d)/?timeout=%ds", config.Config.MySQLTopologyUser, config.Config.MySQLTopologyPassword, host, port, config.Config.MySQLConnectTimeoutSeconds)
+	if config.Config.MySQLTopologyUseMutualTLS {
+		mysql_uri, _ = SetupMySQLTopologyTLS(mysql_uri)
+	}
 	db, _, err := sqlutils.GetDB(mysql_uri)
 	db.SetMaxOpenConns(config.Config.MySQLTopologyMaxPoolConnections)
 	db.SetMaxIdleConns(config.Config.MySQLTopologyMaxPoolConnections)
 	return db, err
 }
 
+// Create a TLS configuration from the config supplied CA, Certificate, and Private key.
+// Register the TLS config with the mysql drivers as the "topology" config
+// Modify the supplied URI to call the TLS config
+// TODO: Way to have password mixed with TLS for various nodes in the topology.  Currently everything is TLS or everything is password
+func SetupMySQLTopologyTLS(uri string) (string, error) {
+	if !topologyTLSConfigured {
+		tlsConfig, err := ssl.NewTLSConfig(config.Config.MySQLTopologySSLCAFile, !config.Config.MySQLTopologySSLSkipVerify)
+		// Drop to TLS 1.0 for talking to MySQL
+		tlsConfig.MinVersion = tls.VersionTLS10
+		if err != nil {
+			return "", log.Fatalf("Can't create TLS configuration for Topology connection %s: %s", uri, err)
+		}
+		tlsConfig.InsecureSkipVerify = config.Config.MySQLTopologySSLSkipVerify
+		if err = ssl.AppendKeyPair(tlsConfig, config.Config.MySQLTopologySSLCertFile, config.Config.MySQLTopologySSLPrivateKeyFile); err != nil {
+			return "", log.Fatalf("Can't setup TLS key pairs for %s: %s", uri, err)
+		}
+		if err = mysql.RegisterTLSConfig("topology", tlsConfig); err != nil {
+			return "", log.Fatalf("Can't register mysql TLS config for topology: %s", err)
+		}
+		topologyTLSConfigured = true
+	}
+	return fmt.Sprintf("%s&tls=topology", uri), nil
+}
+
 // OpenTopology returns the DB instance for the orchestrator backed database
 func OpenOrchestrator() (*sql.DB, error) {
+	if config.Config.DatabaselessMode__experimental {
+		return nil, nil
+	}
 	mysql_uri := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?timeout=%ds", config.Config.MySQLOrchestratorUser, config.Config.MySQLOrchestratorPassword,
 		config.Config.MySQLOrchestratorHost, config.Config.MySQLOrchestratorPort, config.Config.MySQLOrchestratorDatabase, config.Config.MySQLConnectTimeoutSeconds)
+	if config.Config.MySQLOrchestratorUseMutualTLS {
+		mysql_uri, _ = SetupMySQLOrchestratorTLS(mysql_uri)
+	}
 	db, fromCache, err := sqlutils.GetDB(mysql_uri)
 	if err == nil && !fromCache {
-		if !config.Config.SkipOrchestratorDatabaseUpdate {
-			initOrchestratorDB(db)
-		}
+		initOrchestratorDB(db)
 		db.SetMaxIdleConns(10)
 	}
 	return db, err
+}
+
+// versionIsDeployed checks if given version has already been deployed
+func versionIsDeployed(db *sql.DB) (result bool, err error) {
+	query := `
+		select
+			count(*) as is_deployed
+		from
+			orchestrator_db_deployments
+		where
+			deployed_version = ?
+		`
+	err = db.QueryRow(query, config.RuntimeCLIFlags.ConfiguredVersion).Scan(&result)
+	// err means the table 'orchestrator_db_deployments' does not even exist, in which case we proceed
+	// to deploy.
+	// If there's another error to this, like DB gone bad, then we're about to find out anyway.
+	return result, err
+}
+
+// registerOrchestratorDeployment updates the orchestrator_metadata table upon successful deployment
+func registerOrchestratorDeployment(db *sql.DB) error {
+	query := `
+    	replace into orchestrator_db_deployments (
+				deployed_version, deployed_timestamp
+			) values (
+				?, NOW()
+			)
+				`
+	if _, err := execInternal(db, query, config.RuntimeCLIFlags.ConfiguredVersion); err != nil {
+		log.Fatalf("Unable to write to orchestrator_metadata: %+v", err)
+	}
+	log.Debugf("Migrated database schema to version [%+v]", config.RuntimeCLIFlags.ConfiguredVersion)
+	return nil
+}
+
+// Create a TLS configuration from the config supplied CA, Certificate, and Private key.
+// Register the TLS config with the mysql drivers as the "orchestrator" config
+// Modify the supplied URI to call the TLS config
+func SetupMySQLOrchestratorTLS(uri string) (string, error) {
+	if !orchestratorTLSConfigured {
+		tlsConfig, err := ssl.NewTLSConfig(config.Config.MySQLOrchestratorSSLCAFile, true)
+		// Drop to TLS 1.0 for talking to MySQL
+		tlsConfig.MinVersion = tls.VersionTLS10
+		if err != nil {
+			return "", log.Fatalf("Can't create TLS configuration for Orchestrator connection %s: %s", uri, err)
+		}
+		tlsConfig.InsecureSkipVerify = config.Config.MySQLOrchestratorSSLSkipVerify
+		if err = ssl.AppendKeyPair(tlsConfig, config.Config.MySQLOrchestratorSSLCertFile, config.Config.MySQLOrchestratorSSLPrivateKeyFile); err != nil {
+			return "", log.Fatalf("Can't setup TLS key pairs for %s: %s", uri, err)
+		}
+		if err = mysql.RegisterTLSConfig("orchestrator", tlsConfig); err != nil {
+			return "", log.Fatalf("Can't register mysql TLS config for orchestrator: %s", err)
+		}
+		orchestratorTLSConfigured = true
+	}
+	return fmt.Sprintf("%s&tls=orchestrator", uri), nil
+}
+
+// deployStatements will issue given sql queries that are not already known to be deployed.
+// This iterates both lists (to-run and already-deployed) and also verifies no contraditions.
+func deployStatements(db *sql.DB, queries []string, fatalOnError bool) error {
+	tx, err := db.Begin()
+	if err != nil {
+		log.Fatale(err)
+	}
+	// Ugly workaround ahead.
+	// Origin of this workaround is the existence of some "timestamp NOT NULL," column definitions,
+	// where in NO_ZERO_IN_DATE,NO_ZERO_DATE sql_mode are invalid (since default is implicitly "0")
+	// This means installation of orchestrator fails on such configured servers, and in particular on 5.7
+	// where this setting is the dfault.
+	// For purpose of backwards compatability, what we do is force sql_mode to be more relaxed, create the schemas
+	// along with the "invalid" definition, and then go ahead and fix those definitions via following ALTER statements.
+	// My bad.
+	originalSqlMode := ""
+	err = tx.QueryRow(`select @@session.sql_mode`).Scan(&originalSqlMode)
+	if _, err := tx.Exec(`set @@session.sql_mode=REPLACE(@@session.sql_mode, 'NO_ZERO_DATE', '')`); err != nil {
+		log.Fatale(err)
+	}
+	if _, err := tx.Exec(`set @@session.sql_mode=REPLACE(@@session.sql_mode, 'NO_ZERO_IN_DATE', '')`); err != nil {
+		log.Fatale(err)
+	}
+
+	for i, query := range queries {
+		if i == 0 {
+			//log.Debugf("sql_mode is: %+v", originalSqlMode)
+		}
+
+		if fatalOnError {
+			if _, err := tx.Exec(query); err != nil {
+				return log.Fatalf("Cannot initiate orchestrator: %+v", err)
+			}
+		} else {
+			tx.Exec(query)
+			// And ignore any error
+		}
+	}
+	if _, err := tx.Exec(`set session sql_mode=?`, originalSqlMode); err != nil {
+		log.Fatale(err)
+	}
+	if err := tx.Commit(); err != nil {
+		log.Fatale(err)
+	}
+	return nil
 }
 
 // initOrchestratorDB attempts to create/upgrade the orchestrator backend database. It is created once in the
 // application's lifetime.
 func initOrchestratorDB(db *sql.DB) error {
 	log.Debug("Initializing orchestrator")
-	for _, query := range generateSQL {
-		_, err := execInternal(db, query)
-		if err != nil {
-			return log.Fatalf("Cannot initiate orchestrator: %+v", err)
-		}
+
+	versionAlreadyDeployed, err := versionIsDeployed(db)
+	if versionAlreadyDeployed && config.RuntimeCLIFlags.ConfiguredVersion != "" && err == nil {
+		// Already deployed with this version
+		return nil
 	}
-	for _, query := range generateSQLPatches {
-		// Patches are allowed to fail.
-		_, _ = execInternalSilently(db, query)
-	}
+	log.Debugf("Migrating database schema")
+	deployStatements(db, generateSQLBase, true)
+	deployStatements(db, generateSQLPatches, false)
+	registerOrchestratorDeployment(db)
 	return nil
 }
 
-// ExecOrchestrator will execute given query on the orchestrator backend database.
+// execInternalSilently
 func execInternalSilently(db *sql.DB, query string, args ...interface{}) (sql.Result, error) {
 	res, err := sqlutils.ExecSilently(db, query, args...)
 	return res, err
 }
 
-// ExecOrchestrator will execute given query on the orchestrator backend database.
+// execInternal
 func execInternal(db *sql.DB, query string, args ...interface{}) (sql.Result, error) {
 	res, err := sqlutils.ExecSilently(db, query, args...)
 	return res, err
@@ -547,10 +1016,68 @@ func execInternal(db *sql.DB, query string, args ...interface{}) (sql.Result, er
 
 // ExecOrchestrator will execute given query on the orchestrator backend database.
 func ExecOrchestrator(query string, args ...interface{}) (sql.Result, error) {
+	if config.Config.DatabaselessMode__experimental {
+		return DummySqlResult{}, nil
+	}
 	db, err := OpenOrchestrator()
 	if err != nil {
 		return nil, err
 	}
 	res, err := sqlutils.Exec(db, query, args...)
 	return res, err
+}
+
+// QueryRowsMapOrchestrator
+func QueryOrchestratorRowsMap(query string, on_row func(sqlutils.RowMap) error) error {
+	if config.Config.DatabaselessMode__experimental {
+		return nil
+	}
+	db, err := OpenOrchestrator()
+	if err != nil {
+		return err
+	}
+
+	return sqlutils.QueryRowsMap(db, query, on_row)
+}
+
+// QueryOrchestrator
+func QueryOrchestrator(query string, argsArray []interface{}, on_row func(sqlutils.RowMap) error) error {
+	if config.Config.DatabaselessMode__experimental {
+		return nil
+	}
+	db, err := OpenOrchestrator()
+	if err != nil {
+		return err
+	}
+
+	return log.Criticale(sqlutils.QueryRowsMap(db, query, on_row, argsArray...))
+}
+
+// QueryOrchestratorRowsMapBuffered
+func QueryOrchestratorRowsMapBuffered(query string, on_row func(sqlutils.RowMap) error) error {
+	if config.Config.DatabaselessMode__experimental {
+		return nil
+	}
+	db, err := OpenOrchestrator()
+	if err != nil {
+		return err
+	}
+
+	return sqlutils.QueryRowsMapBuffered(db, query, on_row)
+}
+
+// QueryOrchestratorBuffered
+func QueryOrchestratorBuffered(query string, argsArray []interface{}, on_row func(sqlutils.RowMap) error) error {
+	if config.Config.DatabaselessMode__experimental {
+		return nil
+	}
+	db, err := OpenOrchestrator()
+	if err != nil {
+		return err
+	}
+
+	if argsArray == nil {
+		argsArray = EmptyArgs
+	}
+	return log.Criticale(sqlutils.QueryRowsMapBuffered(db, query, on_row, argsArray...))
 }

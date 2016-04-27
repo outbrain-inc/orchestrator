@@ -17,15 +17,20 @@
 package logic
 
 import (
-	"github.com/cyberdelia/go-metrics-graphite"
+	"os"
+	"os/signal"
+	"sync/atomic"
+	"syscall"
+	"time"
+
 	"github.com/outbrain/golib/log"
 	"github.com/outbrain/orchestrator/go/agent"
 	"github.com/outbrain/orchestrator/go/config"
 	"github.com/outbrain/orchestrator/go/inst"
+	ometrics "github.com/outbrain/orchestrator/go/metrics"
+	"github.com/outbrain/orchestrator/go/process"
+	"github.com/pmylund/go-cache"
 	"github.com/rcrowley/go-metrics"
-	"net"
-	"strings"
-	"time"
 )
 
 const (
@@ -34,43 +39,77 @@ const (
 
 // discoveryInstanceKeys is a channel of instanceKey-s that were requested for discovery.
 // It can be continuously updated as discovery process progresses.
-var discoveryInstanceKeys chan inst.InstanceKey = make(chan inst.InstanceKey, maxConcurrency)
+var discoveryInstanceKeys = make(chan inst.InstanceKey, maxConcurrency)
+
 var discoveriesCounter = metrics.NewCounter()
 var failedDiscoveriesCounter = metrics.NewCounter()
+var discoveryQueueLengthGauge = metrics.NewGauge()
+var discoveryRecentCountGauge = metrics.NewGauge()
+var isElectedGauge = metrics.NewGauge()
+
+var isElectedNode int64 = 0
+
+var recentDiscoveryOperationKeys *cache.Cache
 
 func init() {
 	metrics.Register("discoveries.attempt", discoveriesCounter)
 	metrics.Register("discoveries.fail", failedDiscoveriesCounter)
+	metrics.Register("discoveries.queue_length", discoveryQueueLengthGauge)
+	metrics.Register("discoveries.recent_count", discoveryRecentCountGauge)
+	metrics.Register("elect.is_elected", isElectedGauge)
+
+	ometrics.OnGraphiteTick(func() { discoveryQueueLengthGauge.Update(int64(len(discoveryInstanceKeys))) })
+	ometrics.OnGraphiteTick(func() {
+		if recentDiscoveryOperationKeys == nil {
+			return
+		}
+		discoveryRecentCountGauge.Update(int64(recentDiscoveryOperationKeys.ItemCount()))
+	})
+	ometrics.OnGraphiteTick(func() { isElectedGauge.Update(int64(atomic.LoadInt64(&isElectedNode))) })
 }
 
-// handleDiscoveryRequests iterates the discoveryInstanceKeys channel and calls upon
-// instance discovery per entry.
-func handleDiscoveryRequests(pendingTokens chan bool, completedTokens chan bool) {
-	for instanceKey := range discoveryInstanceKeys {
-		AccountedDiscoverInstance(instanceKey, pendingTokens, completedTokens)
-	}
-}
+// acceptSignals registers for OS signals
+func acceptSignals() {
+	c := make(chan os.Signal, 1)
 
-// AccountedDiscoverInstance will call upon DiscoverInstance and will keep track of
-// discovery tokens such that management of multiple discoveries can figure out
-// whether all instances in a topology are accounted for.
-func AccountedDiscoverInstance(instanceKey inst.InstanceKey, pendingTokens chan bool, completedTokens chan bool) {
-	if pendingTokens != nil {
-		pendingTokens <- true
-	}
+	signal.Notify(c, syscall.SIGHUP)
 	go func() {
-		DiscoverInstance(instanceKey)
-		if completedTokens != nil {
-			completedTokens <- true
+		for sig := range c {
+			switch sig {
+			case syscall.SIGHUP:
+				log.Debugf("Received SIGHUP. Reloading configuration")
+				config.Reload()
+				inst.AuditOperation("reload-configuration", nil, "Triggered via SIGHUP")
+			}
 		}
 	}()
 }
 
-// DiscoverInstance will attempt discovering an instance (unless it is already up to date) and will
+// handleDiscoveryRequests iterates the discoveryInstanceKeys channel and calls upon
+// instance discovery per entry.
+func handleDiscoveryRequests() {
+	for instanceKey := range discoveryInstanceKeys {
+		// Possibly this used to be the elected node, but has been demoted, while still
+		// the queue is full.
+		// Just don't process the queue when not elected.
+		if atomic.LoadInt64(&isElectedNode) == 1 {
+			go discoverInstance(instanceKey)
+		} else {
+			log.Debugf("Node apparently demoted. Skipping discovery of %+v. Remaining queue size: %+v", instanceKey, len(discoveryInstanceKeys))
+		}
+	}
+}
+
+// discoverInstance will attempt discovering an instance (unless it is already up to date) and will
 // list down its master and slaves (if any) for further discovery.
-func DiscoverInstance(instanceKey inst.InstanceKey) {
+func discoverInstance(instanceKey inst.InstanceKey) {
 	instanceKey.Formalize()
 	if !instanceKey.IsValid() {
+		return
+	}
+
+	if existsInCacheError := recentDiscoveryOperationKeys.Add(instanceKey.DisplayString(), true, cache.DefaultExpiration); existsInCacheError != nil {
+		// Just recently attempted
 		return
 	}
 
@@ -78,151 +117,160 @@ func DiscoverInstance(instanceKey inst.InstanceKey) {
 
 	if found && instance.IsUpToDate && instance.IsLastCheckValid {
 		// we've already discovered this one. Skip!
-		goto Cleanup
+		return
 	}
 	discoveriesCounter.Inc(1)
 	// First we've ever heard of this instance. Continue investigation:
 	instance, err = inst.ReadTopologyInstance(&instanceKey)
 	// panic can occur (IO stuff). Therefore it may happen
 	// that instance is nil. Check it.
-	if err != nil || instance == nil {
+	if instance == nil {
 		failedDiscoveriesCounter.Inc(1)
-		log.Warningf("instance is nil in DiscoverInstance. key=%+v, error=%+v", instanceKey, err)
-		goto Cleanup
+		log.Warningf("instance is nil in discoverInstance. key=%+v, error=%+v", instanceKey, err)
+		return
 	}
 
-	log.Debugf("Discovered host: %+v, master: %+v", instance.Key, instance.MasterKey)
+	log.Debugf("Discovered host: %+v, master: %+v, version: %+v", instance.Key, instance.MasterKey, instance.Version)
+
+	if atomic.LoadInt64(&isElectedNode) == 0 {
+		// Maybe this node was elected before, but isn't elected anymore.
+		// If not elected, stop drilling up/down the topology
+		return
+	}
 
 	// Investigate slaves:
 	for _, slaveKey := range instance.SlaveHosts.GetInstanceKeys() {
-		discoveryInstanceKeys <- slaveKey
-	}
-	// Investigate master:
-	discoveryInstanceKeys <- instance.MasterKey
-
-Cleanup:
-}
-
-// Start discovery begins a one time asynchronuous discovery process for the given
-// instance and all of its topology connected instances.
-// That is, the instance will be investigated for master and slaves, and the routines will follow on
-// each and every such found master/slave.
-// In essense, assuming all slaves in a replication topology are running, and given a single instance
-// in such topology, this function will detect the entire topology.
-func StartDiscovery(instanceKey inst.InstanceKey) {
-	log.Infof("Starting discovery at %+v", instanceKey)
-	pendingTokens := make(chan bool, maxConcurrency)
-	completedTokens := make(chan bool, maxConcurrency)
-
-	AccountedDiscoverInstance(instanceKey, pendingTokens, completedTokens)
-	go handleDiscoveryRequests(pendingTokens, completedTokens)
-
-	// Block until all are complete
-	for {
-		select {
-		case <-pendingTokens:
-			<-completedTokens
-		default:
-			inst.AuditOperation("start-discovery", &instanceKey, "")
-			return
+		slaveKey := slaveKey
+		if slaveKey.IsValid() {
+			discoveryInstanceKeys <- slaveKey
 		}
 	}
-}
-
-func initGraphiteMetrics() error {
-	if config.Config.GraphiteAddr == "" {
-		return nil
+	// Investigate master:
+	if instance.MasterKey.IsValid() {
+		discoveryInstanceKeys <- instance.MasterKey
 	}
-	if config.Config.GraphitePath == "" {
-		return log.Errorf("No graphite path provided (see GraphitePath config variable). Will not log to graphite")
-	}
-	addr, err := net.ResolveTCPAddr("tcp", config.Config.GraphiteAddr)
-	if err != nil {
-		return log.Errore(err)
-	}
-	graphitePathHostname := ThisHostname
-	if config.Config.GraphiteConvertHostnameDotsToUnderscores {
-		graphitePathHostname = strings.Replace(graphitePathHostname, ".", "_", -1)
-	}
-	graphitePath := config.Config.GraphitePath
-	graphitePath = strings.Replace(graphitePath, "{hostname}", graphitePathHostname, -1)
-
-	log.Debugf("Will log to graphite on %+v, %+v", config.Config.GraphiteAddr, graphitePath)
-	go graphite.Graphite(metrics.DefaultRegistry, 1*time.Minute, graphitePath, addr)
-
-	return nil
-
 }
 
 // ContinuousDiscovery starts an asynchronuous infinite discovery process where instances are
 // periodically investigated and their status captured, and long since unseen instances are
 // purged and forgotten.
 func ContinuousDiscovery() {
-	log.Infof("Starting continuous discovery")
-	inst.LoadHostnameResolveCacheFromDatabase()
-	go handleDiscoveryRequests(nil, nil)
-	tick := time.Tick(time.Duration(config.Config.DiscoveryPollSeconds) * time.Second)
-	forgetUnseenTick := time.Tick(time.Minute)
-	recoverTick := time.Tick(10 * time.Second)
+	if config.Config.DatabaselessMode__experimental {
+		log.Fatal("Cannot execute continuous mode in databaseless mode")
+	}
 
+	log.Infof("Starting continuous discovery")
+	recentDiscoveryOperationKeys = cache.New(time.Duration(config.Config.InstancePollSeconds)*time.Second, time.Second)
+
+	inst.LoadHostnameResolveCache()
+	go handleDiscoveryRequests()
+
+	discoveryTick := time.Tick(time.Duration(config.Config.GetDiscoveryPollSeconds()) * time.Second)
+	instancePollTick := time.Tick(time.Duration(config.Config.InstancePollSeconds) * time.Second)
+	caretakingTick := time.Tick(time.Minute)
+	recoveryTick := time.Tick(time.Duration(config.Config.RecoveryPollSeconds) * time.Second)
 	var snapshotTopologiesTick <-chan time.Time
 	if config.Config.SnapshotTopologiesIntervalHours > 0 {
 		snapshotTopologiesTick = time.Tick(time.Duration(config.Config.SnapshotTopologiesIntervalHours) * time.Hour)
 	}
 
-	go initGraphiteMetrics()
+	go ometrics.InitGraphiteMetrics()
+	go acceptSignals()
 
-	elected := false
-	_ = CreateElectionAnchor(false)
+	if *config.RuntimeCLIFlags.GrabElection {
+		process.GrabElection()
+	}
 	for {
 		select {
-		case <-tick:
-			if elected, _ = AttemptElection(); elected {
-				instanceKeys, _ := inst.ReadOutdatedInstanceKeys()
-				log.Debugf("outdated keys: %+v", instanceKeys)
-				for _, instanceKey := range instanceKeys {
-					discoveryInstanceKeys <- instanceKey
-				}
-			} else {
-				log.Debugf("Not elected as active node; polling")
-			}
-		case <-forgetUnseenTick:
-			// See if we should also forget objects (lower frequency)
+		case <-discoveryTick:
 			go func() {
-				if elected {
-					inst.ForgetLongUnseenInstances()
-					inst.ForgetUnseenInstancesDifferentlyResolved()
-					inst.ForgetExpiredHostnameResolves()
-					inst.DeleteInvalidHostnameResolves()
-					inst.ReviewUnseenInstances()
-					inst.InjectUnseenMasters()
-					inst.ResolveUnknownMasterHostnameResolves()
-					inst.ExpireMaintenance()
-					inst.ExpireDowntime()
-					inst.ExpireCandidateInstances()
-					inst.ExpireHostnameUnresolve()
-					inst.ExpireClusterDomainName()
-					inst.ExpireAudit()
-					inst.ExpireMasterPositionEquivalence()
+				wasAlreadyElected := atomic.LoadInt64(&isElectedNode)
+				myIsElectedNode, err := process.AttemptElection()
+				if err != nil {
+					log.Errore(err)
 				}
-				if !elected {
-					// Take this opportunity to refresh yourself
-					inst.LoadHostnameResolveCacheFromDatabase()
+				if myIsElectedNode {
+					atomic.StoreInt64(&isElectedNode, 1)
+				} else {
+					atomic.StoreInt64(&isElectedNode, 0)
 				}
-				inst.ReadClusterAliases()
-				HealthTest()
+
+				if myIsElectedNode {
+					instanceKeys, err := inst.ReadOutdatedInstanceKeys()
+					if err != nil {
+						log.Errore(err)
+					}
+
+					log.Debugf("outdated keys: %+v", instanceKeys)
+					for _, instanceKey := range instanceKeys {
+						instanceKey := instanceKey
+
+						go func() {
+							if instanceKey.IsValid() {
+								discoveryInstanceKeys <- instanceKey
+							}
+						}()
+					}
+					if wasAlreadyElected == 0 {
+						// Just turned to be leader!
+						go process.RegisterNode("", "", false)
+					}
+				} else {
+					log.Debugf("Not elected as active node; polling")
+				}
 			}()
-		case <-recoverTick:
+		case <-instancePollTick:
 			go func() {
-				if elected {
-					ClearActiveFailureDetections()
-					ClearActiveRecoveries()
-					CheckAndRecover(nil, nil, false, false)
+				// This tick does NOT do instance poll (these are handled by the oversmapling discoveryTick)
+				// But rather should invoke such routinely operations that need to be as (or roughly as) frequent
+				// as instance poll
+				if atomic.LoadInt64(&isElectedNode) == 1 {
+					go inst.UpdateInstanceRecentRelaylogHistory()
+					go inst.RecordInstanceCoordinatesHistory()
+				}
+			}()
+		case <-caretakingTick:
+			// Various periodic internal maintenance tasks
+			go func() {
+				if atomic.LoadInt64(&isElectedNode) == 1 {
+					go inst.RecordInstanceBinlogFileHistory()
+					go inst.ForgetLongUnseenInstances()
+					go inst.ForgetUnseenInstancesDifferentlyResolved()
+					go inst.ForgetExpiredHostnameResolves()
+					go inst.DeleteInvalidHostnameResolves()
+					go inst.ReviewUnseenInstances()
+					go inst.InjectUnseenMasters()
+					go inst.ResolveUnknownMasterHostnameResolves()
+					go inst.UpdateClusterAliases()
+					go inst.ExpireMaintenance()
+					go inst.ExpireDowntime()
+					go inst.ExpireCandidateInstances()
+					go inst.ExpireHostnameUnresolve()
+					go inst.ExpireClusterDomainName()
+					go inst.ExpireAudit()
+					go inst.ExpireMasterPositionEquivalence()
+					go inst.FlushNontrivialResolveCacheToDatabase()
+					go process.ExpireNodesHistory()
+					go process.ExpireAccessTokens()
+				} else {
+					// Take this opportunity to refresh yourself
+					go inst.LoadHostnameResolveCache()
+				}
+			}()
+		case <-recoveryTick:
+			go func() {
+				if atomic.LoadInt64(&isElectedNode) == 1 {
+					go ClearActiveFailureDetections()
+					go ClearActiveRecoveries()
+					go ExpireBlockedRecoveries()
+					go AcknowledgeCrashedRecoveries()
+					go inst.ExpireInstanceAnalysisChangelog()
+					go CheckAndRecover(nil, nil, false)
 				}
 			}()
 		case <-snapshotTopologiesTick:
 			go func() {
-				inst.SnapshotTopologies()
+				go inst.SnapshotTopologies()
 			}()
 		}
 	}
@@ -252,8 +300,8 @@ func ContinuousAgentsPoll() {
 
 	go discoverSeededAgents()
 
-	tick := time.Tick(time.Duration(config.Config.DiscoveryPollSeconds) * time.Second)
-	forgetUnseenTick := time.Tick(time.Hour)
+	tick := time.Tick(time.Duration(config.Config.GetDiscoveryPollSeconds()) * time.Second)
+	caretakingTick := time.Tick(time.Hour)
 	for range tick {
 		agentsHosts, _ := agent.ReadOutdatedAgentsHosts()
 		log.Debugf("outdated agents hosts: %+v", agentsHosts)
@@ -262,7 +310,7 @@ func ContinuousAgentsPoll() {
 		}
 		// See if we should also forget agents (lower frequency)
 		select {
-		case <-forgetUnseenTick:
+		case <-caretakingTick:
 			agent.ForgetLongUnseenAgents()
 			agent.FailStaleSeeds()
 		default:
@@ -272,7 +320,7 @@ func ContinuousAgentsPoll() {
 
 func discoverSeededAgents() {
 	for seededAgent := range agent.SeededAgents {
-		instanceKey := inst.InstanceKey{Hostname: seededAgent.Hostname, Port: int(seededAgent.MySQLPort)}
-		go StartDiscovery(instanceKey)
+		instanceKey := &inst.InstanceKey{Hostname: seededAgent.Hostname, Port: int(seededAgent.MySQLPort)}
+		go inst.ReadTopologyInstance(instanceKey)
 	}
 }

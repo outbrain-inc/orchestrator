@@ -27,7 +27,7 @@ import (
 // ReadActiveMaintenance returns the list of currently active maintenance entries
 func ReadActiveMaintenance() ([]Maintenance, error) {
 	res := []Maintenance{}
-	query := fmt.Sprintf(`
+	query := `
 		select 
 			database_instance_maintenance_id,
 			hostname,
@@ -43,13 +43,8 @@ func ReadActiveMaintenance() ([]Maintenance, error) {
 			maintenance_active = 1
 		order by
 			database_instance_maintenance_id
-		`)
-	db, err := db.OpenOrchestrator()
-	if err != nil {
-		goto Cleanup
-	}
-
-	err = sqlutils.QueryRowsMap(db, query, func(m sqlutils.RowMap) error {
+		`
+	err := db.QueryOrchestratorRowsMap(query, func(m sqlutils.RowMap) error {
 		maintenance := Maintenance{}
 		maintenance.MaintenanceId = m.GetUint("database_instance_maintenance_id")
 		maintenance.Key.Hostname = m.GetString("hostname")
@@ -61,9 +56,8 @@ func ReadActiveMaintenance() ([]Maintenance, error) {
 		maintenance.Reason = m.GetString("reason")
 
 		res = append(res, maintenance)
-		return err
+		return nil
 	})
-Cleanup:
 
 	if err != nil {
 		log.Errore(err)
@@ -74,16 +68,11 @@ Cleanup:
 
 // BeginBoundedMaintenance will make new maintenance entry for given instanceKey.
 func BeginBoundedMaintenance(instanceKey *InstanceKey, owner string, reason string, durationSeconds uint) (int64, error) {
-	db, err := db.OpenOrchestrator()
 	var maintenanceToken int64 = 0
-	if err != nil {
-		return maintenanceToken, log.Errore(err)
-	}
-
 	if durationSeconds == 0 {
 		durationSeconds = config.Config.MaintenanceExpireMinutes * 60
 	}
-	res, err := sqlutils.Exec(db, `
+	res, err := db.ExecOrchestrator(`
 			insert ignore
 				into database_instance_maintenance (
 					hostname, port, maintenance_active, begin_timestamp, end_timestamp, owner, reason
@@ -118,12 +107,7 @@ func BeginMaintenance(instanceKey *InstanceKey, owner string, reason string) (in
 
 // EndMaintenanceByInstanceKey will terminate an active maintenance using given instanceKey as hint
 func EndMaintenanceByInstanceKey(instanceKey *InstanceKey) error {
-	db, err := db.OpenOrchestrator()
-	if err != nil {
-		return log.Errore(err)
-	}
-
-	res, err := sqlutils.Exec(db, `
+	res, err := db.ExecOrchestrator(`
 			update
 				database_instance_maintenance
 			set  
@@ -153,20 +137,16 @@ func EndMaintenanceByInstanceKey(instanceKey *InstanceKey) error {
 // ReadMaintenanceInstanceKey will return the instanceKey for active maintenance by maintenanceToken
 func ReadMaintenanceInstanceKey(maintenanceToken int64) (*InstanceKey, error) {
 	var res *InstanceKey
-	query := fmt.Sprintf(`
+	query := `
 		select 
 			hostname, port 
 		from 
 			database_instance_maintenance 
 		where
-			database_instance_maintenance_id = %d `,
-		maintenanceToken)
-	db, err := db.OpenOrchestrator()
-	if err != nil {
-		goto Cleanup
-	}
+			database_instance_maintenance_id = ?
+			`
 
-	err = sqlutils.QueryRowsMap(db, query, func(m sqlutils.RowMap) error {
+	err := db.QueryOrchestrator(query, sqlutils.Args(maintenanceToken), func(m sqlutils.RowMap) error {
 		instanceKey, merr := NewInstanceKeyFromStrings(m.GetString("hostname"), m.GetString("port"))
 		if merr != nil {
 			return merr
@@ -175,7 +155,6 @@ func ReadMaintenanceInstanceKey(maintenanceToken int64) (*InstanceKey, error) {
 		res = instanceKey
 		return nil
 	})
-Cleanup:
 
 	if err != nil {
 		log.Errore(err)
@@ -185,12 +164,7 @@ Cleanup:
 
 // EndMaintenance will terminate an active maintenance via maintenanceToken
 func EndMaintenance(maintenanceToken int64) error {
-	db, err := db.OpenOrchestrator()
-	if err != nil {
-		return log.Errore(err)
-	}
-
-	res, err := sqlutils.Exec(db, `
+	res, err := db.ExecOrchestrator(`
 			update
 				database_instance_maintenance
 			set  
@@ -216,13 +190,8 @@ func EndMaintenance(maintenanceToken int64) error {
 
 // ExpireMaintenance will remove the maintenance flag on old maintenances and on bounded maintenances
 func ExpireMaintenance() error {
-	db, err := db.OpenOrchestrator()
-	if err != nil {
-		return log.Errore(err)
-	}
-
 	{
-		res, err := sqlutils.Exec(db, `
+		res, err := db.ExecOrchestrator(`
 			delete from
 				database_instance_maintenance
 			where
@@ -239,7 +208,7 @@ func ExpireMaintenance() error {
 		}
 	}
 	{
-		res, err := sqlutils.Exec(db, `
+		res, err := db.ExecOrchestrator(`
 			update
 				database_instance_maintenance
 			set  
@@ -257,5 +226,5 @@ func ExpireMaintenance() error {
 		}
 	}
 
-	return err
+	return nil
 }

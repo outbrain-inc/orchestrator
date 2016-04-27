@@ -46,6 +46,16 @@ func (this *HttpWeb) getInstanceKey(host string, port string) (inst.InstanceKey,
 	return instanceKey, err
 }
 
+func (this *HttpWeb) AccessToken(params martini.Params, r render.Render, req *http.Request, resp http.ResponseWriter, user auth.User) {
+	publicToken := req.URL.Query().Get("publicToken")
+	err := authenticateToken(publicToken, resp)
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
+		return
+	}
+	r.Redirect("/")
+}
+
 func (this *HttpWeb) Clusters(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	r.HTML(200, "templates/clusters", map[string]interface{}{
 		"agentsHttpActive":              config.Config.ServeAgentsHttp,
@@ -95,6 +105,28 @@ func (this *HttpWeb) ClusterByAlias(params martini.Params, r render.Render, req 
 	}
 
 	params["clusterName"] = clusterName
+	this.Cluster(params, r, req, user)
+}
+
+func (this *HttpWeb) ClusterByInstance(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+	instanceKey, err := this.getInstanceKey(params["host"], params["port"])
+	if err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
+		return
+	}
+	instance, found, err := inst.ReadInstance(&instanceKey)
+	if (!found) || (err != nil) {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("Cannot read instance: %+v", instanceKey)})
+		return
+	}
+
+	// Willing to accept the case of multiple clusters; we just present one
+	if instance.ClusterName == "" && err != nil {
+		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
+		return
+	}
+
+	params["clusterName"] = instance.ClusterName
 	this.Cluster(params, r, req, user)
 }
 
@@ -173,6 +205,8 @@ func (this *HttpWeb) Audit(params martini.Params, r render.Render, req *http.Req
 		"userId":              getUserId(req, user),
 		"autoshow_problems":   false,
 		"page":                page,
+		"auditHostname":       params["host"],
+		"auditPort":           params["port"],
 	})
 }
 
@@ -180,6 +214,10 @@ func (this *HttpWeb) AuditRecovery(params martini.Params, r render.Render, req *
 	page, err := strconv.Atoi(params["page"])
 	if err != nil {
 		page = 0
+	}
+	recoveryId, err := strconv.ParseInt(params["id"], 10, 0)
+	if err != nil {
+		recoveryId = 0
 	}
 
 	r.HTML(200, "templates/audit_recovery", map[string]interface{}{
@@ -190,6 +228,8 @@ func (this *HttpWeb) AuditRecovery(params martini.Params, r render.Render, req *
 		"userId":              getUserId(req, user),
 		"autoshow_problems":   false,
 		"page":                page,
+		"clusterName":         params["clusterName"],
+		"recoveryId":          recoveryId,
 	})
 }
 
@@ -197,6 +237,10 @@ func (this *HttpWeb) AuditFailureDetection(params martini.Params, r render.Rende
 	page, err := strconv.Atoi(params["page"])
 	if err != nil {
 		page = 0
+	}
+	detectionId, err := strconv.ParseInt(params["id"], 10, 0)
+	if err != nil {
+		detectionId = 0
 	}
 
 	r.HTML(200, "templates/audit_failure_detection", map[string]interface{}{
@@ -207,6 +251,7 @@ func (this *HttpWeb) AuditFailureDetection(params martini.Params, r render.Rende
 		"userId":              getUserId(req, user),
 		"autoshow_problems":   false,
 		"page":                page,
+		"detectionId":         detectionId,
 	})
 }
 
@@ -318,6 +363,7 @@ func (this *HttpWeb) Status(params martini.Params, r render.Render, req *http.Re
 
 // RegisterRequests makes for the de-facto list of known Web calls
 func (this *HttpWeb) RegisterRequests(m *martini.ClassicMartini) {
+	m.Get("/web/access-token", this.AccessToken)
 	m.Get("/", this.Clusters)
 	m.Get("/web", this.Clusters)
 	m.Get("/web/home", this.About)
@@ -329,6 +375,7 @@ func (this *HttpWeb) RegisterRequests(m *martini.ClassicMartini) {
 	m.Get("/web/clusters-analysis", this.ClustersAnalysis)
 	m.Get("/web/cluster/:clusterName", this.Cluster)
 	m.Get("/web/cluster/alias/:clusterAlias", this.ClusterByAlias)
+	m.Get("/web/cluster/instance/:host/:port", this.ClusterByInstance)
 	m.Get("/web/cluster-pools/:clusterName", this.ClusterPools)
 	m.Get("/web/search/:searchString", this.Search)
 	m.Get("/web/search", this.Search)
@@ -336,10 +383,16 @@ func (this *HttpWeb) RegisterRequests(m *martini.ClassicMartini) {
 	m.Get("/web/long-queries", this.LongQueries)
 	m.Get("/web/audit", this.Audit)
 	m.Get("/web/audit/:page", this.Audit)
+	m.Get("/web/audit/instance/:host/:port", this.Audit)
+	m.Get("/web/audit/instance/:host/:port/:page", this.Audit)
 	m.Get("/web/audit-recovery", this.AuditRecovery)
 	m.Get("/web/audit-recovery/:page", this.AuditRecovery)
+	m.Get("/web/audit-recovery/id/:id", this.AuditRecovery)
+	m.Get("/web/audit-recovery/cluster/:clusterName", this.AuditRecovery)
+	m.Get("/web/audit-recovery/cluster/:clusterName/:page", this.AuditRecovery)
 	m.Get("/web/audit-failure-detection", this.AuditFailureDetection)
 	m.Get("/web/audit-failure-detection/:page", this.AuditFailureDetection)
+	m.Get("/web/audit-failure-detection/id/:id", this.AuditFailureDetection)
 	m.Get("/web/agents", this.Agents)
 	m.Get("/web/agent/:host", this.Agent)
 	m.Get("/web/seed-details/:seedId", this.AgentSeedDetails)

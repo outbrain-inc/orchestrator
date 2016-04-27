@@ -42,6 +42,10 @@ func init() {
 var hostnameResolvesLightweightCache = cache.New(time.Duration(config.Config.ExpiryHostnameResolvesMinutes)*time.Minute, time.Minute)
 var hostnameResolvesLightweightCacheLoadedOnceFromDB bool = false
 
+func HostnameResolveMethodIsNone() bool {
+	return strings.ToLower(config.Config.HostnameResolveMethod) == "none"
+}
+
 // GetCNAME resolves an IP or hostname into a normalized valid CNAME
 func GetCNAME(hostname string) (string, error) {
 	res, err := net.LookupCNAME(hostname)
@@ -64,13 +68,22 @@ func resolveHostname(hostname string) (string, error) {
 	return hostname, nil
 }
 
-// Attempt to resolve a hostname. This may returned a database cached hostname or otherwise
+// Attempt to resolve a hostname. This may return a database cached hostname or otherwise
 // it may resolve the hostname via CNAME
 func ResolveHostname(hostname string) (string, error) {
 	hostname = strings.TrimSpace(hostname)
 	if hostname == "" {
 		return hostname, errors.New("Will not resolve empty hostname")
 	}
+	if strings.Contains(hostname, ",") {
+		return hostname, fmt.Errorf("Will not resolve multi-hostname: %+v", hostname)
+	}
+	if (&InstanceKey{Hostname: hostname}).IsDetached() {
+		// quietly abort. Nothign to do. The hostname is detached for a reason: it
+		// will not be resolved, for sure.
+		return hostname, nil
+	}
+
 	// First go to lightweight cache
 	if resolvedHostname, found := hostnameResolvesLightweightCache.Get(hostname); found {
 		return resolvedHostname.(string), nil
@@ -81,7 +94,7 @@ func ResolveHostname(hostname string) (string, error) {
 		// However cli does not do so.
 		// Anyway, it seems like the cache was not loaded from DB. Before doing real resolves,
 		// let's try and get the resolved hostname from database.
-		if strings.ToLower(config.Config.HostnameResolveMethod) != "none" {
+		if !HostnameResolveMethodIsNone() {
 			if resolvedHostname, err := ReadResolvedHostname(hostname); err == nil && resolvedHostname != "" {
 				hostnameResolvesLightweightCache.Set(hostname, resolvedHostname, 0)
 				return resolvedHostname, nil
@@ -95,7 +108,8 @@ func ResolveHostname(hostname string) (string, error) {
 	if config.Config.RejectHostnameResolvePattern != "" {
 		// Reject, don't even cache
 		if matched, _ := regexp.MatchString(config.Config.RejectHostnameResolvePattern, resolvedHostname); matched {
-			return hostname, fmt.Errorf("Resolved hostname is rejected: %s", resolvedHostname)
+			log.Warningf("ResolveHostname: %+v resolved to %+v but rejected due to RejectHostnameResolvePattern '%+v'", hostname, resolvedHostname, config.Config.RejectHostnameResolvePattern)
+			return hostname, nil
 		}
 	}
 
@@ -115,17 +129,27 @@ func ResolveHostname(hostname string) (string, error) {
 // Returns false when the key already existed with same resolved value (similar
 // to AFFECTED_ROWS() in mysql)
 func UpdateResolvedHostname(hostname string, resolvedHostname string) bool {
+	if resolvedHostname == "" {
+		return false
+	}
 	if existingResolvedHostname, found := hostnameResolvesLightweightCache.Get(hostname); found && (existingResolvedHostname == resolvedHostname) {
 		return false
 	}
 	hostnameResolvesLightweightCache.Set(hostname, resolvedHostname, 0)
-	if strings.ToLower(config.Config.HostnameResolveMethod) != "none" {
+	if !HostnameResolveMethodIsNone() {
 		WriteResolvedHostname(hostname, resolvedHostname)
 	}
 	return true
 }
 
-func LoadHostnameResolveCacheFromDatabase() error {
+func LoadHostnameResolveCache() error {
+	if !HostnameResolveMethodIsNone() {
+		return loadHostnameResolveCacheFromDatabase()
+	}
+	return nil
+}
+
+func loadHostnameResolveCacheFromDatabase() error {
 	allHostnamesResolves, err := readAllHostnameResolves()
 	if err != nil {
 		return err
@@ -134,6 +158,20 @@ func LoadHostnameResolveCacheFromDatabase() error {
 		hostnameResolvesLightweightCache.Set(hostnameResolve.hostname, hostnameResolve.resolvedHostname, 0)
 	}
 	hostnameResolvesLightweightCacheLoadedOnceFromDB = true
+	return nil
+}
+
+func FlushNontrivialResolveCacheToDatabase() error {
+	if !HostnameResolveMethodIsNone() {
+		return log.Errorf("FlushNontrivialResolveCacheToDatabase() called, but HostnameResolveMethod is %+v", config.Config.HostnameResolveMethod)
+	}
+	items, _ := HostnameResolveCache()
+	for hostname := range items {
+		resolvedHostname, found := hostnameResolvesLightweightCache.Get(hostname)
+		if found && (resolvedHostname.(string) != hostname) {
+			WriteResolvedHostname(hostname, resolvedHostname.(string))
+		}
+	}
 	return nil
 }
 
@@ -149,6 +187,9 @@ func HostnameResolveCache() (map[string]*cache.Item, error) {
 }
 
 func UnresolveHostname(instanceKey *InstanceKey) (InstanceKey, bool, error) {
+	if *config.RuntimeCLIFlags.SkipUnresolve {
+		return *instanceKey, false, nil
+	}
 	unresolvedHostname, err := readUnresolvedHostname(instanceKey.Hostname)
 	if err != nil {
 		return *instanceKey, false, log.Errore(err)

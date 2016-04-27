@@ -3,9 +3,13 @@ var interestingAnalysis = {
 	"DeadMasterAndSlaves" : true,
 	"DeadMasterAndSomeSlaves" : true,
 	"DeadMasterWithoutSlaves" : true,
+	"UnreachableMasterWithStaleSlaves": true,
 	"UnreachableMaster" : true,
 	"AllMasterSlavesNotReplicating" : true,
 	"AllMasterSlavesNotReplicatingOrDead" : true,
+	"AllMasterSlavesStale" : true,
+	"DeadCoMaster" : true,
+	"DeadCoMasterAndSomeSlaves" : true,
 	"DeadIntermediateMaster" : true,
 	"DeadIntermediateMasterWithSingleSlaveFailingToConnect" : true,
 	"DeadIntermediateMasterWithSingleSlave" : true,
@@ -13,5 +17,5 @@ var interestingAnalysis = {
 	"AllIntermediateMasterSlavesFailingToConnectOrDead" : true,
 	"AllIntermediateMasterSlavesNotReplicating" : true,
 	"UnreachableIntermediateMaster" : true,
-	"BinlogServerFailingToConnectToMaster" : true
+	"BinlogServerFailingToConnectToMaster" : true,
 };

@@ -19,10 +19,7 @@ package app
 
 import (
 	nethttp "net/http"
-	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 
 	"github.com/go-martini/martini"
 	"github.com/martini-contrib/auth"
@@ -33,33 +30,38 @@ import (
 	"github.com/outbrain/orchestrator/go/http"
 	"github.com/outbrain/orchestrator/go/inst"
 	"github.com/outbrain/orchestrator/go/logic"
+	"github.com/outbrain/orchestrator/go/process"
+	"github.com/outbrain/orchestrator/go/ssl"
 )
 
-// acceptSignals registers for OS signals
-func acceptSignals() {
-	c := make(chan os.Signal, 1)
-
-	signal.Notify(c, syscall.SIGHUP)
-	go func() {
-		for sig := range c {
-			switch sig {
-			case syscall.SIGHUP:
-				log.Debugf("Received SIGHUP. Reloading configuration")
-				config.Reload()
-			}
-		}
-	}()
-}
+var sslPEMPassword []byte
+var agentSSLPEMPassword []byte
 
 // Http starts serving
 func Http(discovery bool) {
-	acceptSignals()
+	promptForSSLPasswords()
+	process.ContinuousRegistration(process.OrchestratorExecutionHttpMode, "")
 
 	martini.Env = martini.Prod
 	if config.Config.ServeAgentsHttp {
 		go agentsHttp()
 	}
 	standardHttp(discovery)
+}
+
+// Iterate over the private keys and get passwords for them
+// Don't prompt for a password a second time if the files are the same
+func promptForSSLPasswords() {
+	if ssl.IsEncryptedPEM(config.Config.SSLPrivateKeyFile) {
+		sslPEMPassword = ssl.GetPEMPassword(config.Config.SSLPrivateKeyFile)
+	}
+	if ssl.IsEncryptedPEM(config.Config.AgentSSLPrivateKeyFile) {
+		if config.Config.AgentSSLPrivateKeyFile == config.Config.SSLPrivateKeyFile {
+			agentSSLPEMPassword = sslPEMPassword
+		} else {
+			agentSSLPEMPassword = ssl.GetPEMPassword(config.Config.AgentSSLPrivateKeyFile)
+		}
+	}
 }
 
 // standardHttp starts serving HTTP or HTTPS (api/web) requests, to be used by normal clients
@@ -106,17 +108,15 @@ func standardHttp(discovery bool) {
 	}))
 	m.Use(martini.Static("resources/public"))
 	if config.Config.UseMutualTLS {
-		m.Use(http.VerifyOUs(config.Config.SSLValidOUs))
+		m.Use(ssl.VerifyOUs(config.Config.SSLValidOUs))
 	}
 
-	inst.SetMaintenanceOwner(logic.ThisHostname)
+	inst.SetMaintenanceOwner(process.ThisHostname)
 
 	if discovery {
 		log.Info("Starting Discovery")
 		go logic.ContinuousDiscovery()
 	}
-	inst.ReadClusterAliases()
-
 	log.Info("Registering endpoints")
 	http.API.RegisterRequests(m)
 	http.Web.RegisterRequests(m)
@@ -124,14 +124,15 @@ func standardHttp(discovery bool) {
 	// Serve
 	if config.Config.UseSSL {
 		log.Info("Starting HTTPS listener")
-		tlsConfig, err := http.NewTLSConfig(config.Config.SSLCAFile, config.Config.UseMutualTLS)
+		tlsConfig, err := ssl.NewTLSConfig(config.Config.SSLCAFile, config.Config.UseMutualTLS)
 		if err != nil {
 			log.Fatale(err)
 		}
-		if err = http.AppendKeyPair(tlsConfig, config.Config.SSLCertFile, config.Config.SSLPrivateKeyFile); err != nil {
+		tlsConfig.InsecureSkipVerify = config.Config.SSLSkipVerify
+		if err = ssl.AppendKeyPairWithPassword(tlsConfig, config.Config.SSLCertFile, config.Config.SSLPrivateKeyFile, sslPEMPassword); err != nil {
 			log.Fatale(err)
 		}
-		if err = http.ListenAndServeTLS(config.Config.ListenAddress, m, tlsConfig); err != nil {
+		if err = ssl.ListenAndServeTLS(config.Config.ListenAddress, m, tlsConfig); err != nil {
 			log.Fatale(err)
 		}
 	} else {
@@ -149,7 +150,7 @@ func agentsHttp() {
 	m.Use(gzip.All())
 	m.Use(render.Renderer())
 	if config.Config.AgentsUseMutualTLS {
-		m.Use(http.VerifyOUs(config.Config.AgentSSLValidOUs))
+		m.Use(ssl.VerifyOUs(config.Config.AgentSSLValidOUs))
 	}
 
 	log.Info("Starting agents listener")
@@ -161,14 +162,15 @@ func agentsHttp() {
 	// Serve
 	if config.Config.AgentsUseSSL {
 		log.Info("Starting agent HTTPS listener")
-		tlsConfig, err := http.NewTLSConfig(config.Config.AgentSSLCAFile, config.Config.AgentsUseMutualTLS)
+		tlsConfig, err := ssl.NewTLSConfig(config.Config.AgentSSLCAFile, config.Config.AgentsUseMutualTLS)
 		if err != nil {
 			log.Fatale(err)
 		}
-		if err = http.AppendKeyPair(tlsConfig, config.Config.AgentSSLCertFile, config.Config.AgentSSLPrivateKeyFile); err != nil {
+		tlsConfig.InsecureSkipVerify = config.Config.AgentSSLSkipVerify
+		if err = ssl.AppendKeyPairWithPassword(tlsConfig, config.Config.AgentSSLCertFile, config.Config.AgentSSLPrivateKeyFile, agentSSLPEMPassword); err != nil {
 			log.Fatale(err)
 		}
-		if err = http.ListenAndServeTLS(config.Config.AgentsServerPort, m, tlsConfig); err != nil {
+		if err = ssl.ListenAndServeTLS(config.Config.AgentsServerPort, m, tlsConfig); err != nil {
 			log.Fatale(err)
 		}
 	} else {

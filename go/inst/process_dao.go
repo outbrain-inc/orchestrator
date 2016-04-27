@@ -17,7 +17,6 @@
 package inst
 
 import (
-	"fmt"
 	"github.com/outbrain/golib/log"
 	"github.com/outbrain/golib/sqlutils"
 	"github.com/outbrain/orchestrator/go/db"
@@ -26,13 +25,8 @@ import (
 // WriteLongRunningProcesses rewrites current state of long running processes for given instance
 func WriteLongRunningProcesses(instanceKey *InstanceKey, processes []Process) error {
 	writeFunc := func() error {
-		db, err := db.OpenOrchestrator()
-		if err != nil {
-			return log.Errore(err)
-		}
-
-		_, err = sqlutils.Exec(db, `
-			delete from 
+		_, err := db.ExecOrchestrator(`
+			delete from
 					database_instance_long_running_queries
 				where
 					hostname = ?
@@ -45,8 +39,8 @@ func WriteLongRunningProcesses(instanceKey *InstanceKey, processes []Process) er
 		}
 
 		for _, process := range processes {
-			_, merr := sqlutils.Exec(db, `
-	        	insert into database_instance_long_running_queries (
+			_, merr := db.ExecOrchestrator(`
+	        	insert ignore into database_instance_long_running_queries (
 	        		hostname,
 	        		port,
 	        		process_id,
@@ -88,21 +82,13 @@ func WriteLongRunningProcesses(instanceKey *InstanceKey, processes []Process) er
 func ReadLongRunningProcesses(filter string) ([]Process, error) {
 	longRunningProcesses := []Process{}
 
-	filterClause := ""
 	if filter != "" {
-		filterClause = fmt.Sprintf(`
-			where
-				hostname like '%%%s%%'
-				or process_user like '%%%s%%'
-				or process_host like '%%%s%%'
-				or process_db like '%%%s%%'
-				or process_command like '%%%s%%'
-				or process_state like '%%%s%%'
-				or process_info like '%%%s%%'
-		`, filter, filter, filter, filter, filter, filter, filter)
+		filter = "%" + filter + "%"
+	} else {
+		filter = "%"
 	}
-	query := fmt.Sprintf(`
-		select 
+	query := `
+		select
 			hostname,
 			port,
 			process_id,
@@ -114,18 +100,21 @@ func ReadLongRunningProcesses(filter string) ([]Process, error) {
 			process_time_seconds,
 			process_state,
 			process_info
-		from 
+		from
 			database_instance_long_running_queries
-		%s			
+		where
+			hostname like ?
+			or process_user like ?
+			or process_host like ?
+			or process_db like ?
+			or process_command like ?
+			or process_state like ?
+			or process_info like ?
 		order by
 			process_time_seconds desc
-		`, filterClause)
-	db, err := db.OpenOrchestrator()
-	if err != nil {
-		goto Cleanup
-	}
-
-	err = sqlutils.QueryRowsMap(db, query, func(m sqlutils.RowMap) error {
+		`
+	args := sqlutils.Args(filter, filter, filter, filter, filter, filter, filter)
+	err := db.QueryOrchestrator(query, args, func(m sqlutils.RowMap) error {
 		process := Process{}
 		process.InstanceHostname = m.GetString("hostname")
 		process.InstancePort = m.GetInt("port")
@@ -142,7 +131,6 @@ func ReadLongRunningProcesses(filter string) ([]Process, error) {
 		longRunningProcesses = append(longRunningProcesses, process)
 		return nil
 	})
-Cleanup:
 
 	if err != nil {
 		log.Errore(err)
