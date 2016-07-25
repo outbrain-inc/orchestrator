@@ -34,9 +34,10 @@ var (
 // Some of the parameteres have reasonable default values, and some (like database credentials) are
 // strictly expected from user.
 type Configuration struct {
-	Debug                                        bool // set debug mode (similar to --debug option)
-	EnableSyslog                                 bool // Should logs be directed (in addition) to syslog daemon?
-	ListenAddress                                string
+	Debug                                        bool   // set debug mode (similar to --debug option)
+	EnableSyslog                                 bool   // Should logs be directed (in addition) to syslog daemon?
+	ListenAddress                                string // Where orchestrator HTTP should listen for TCP
+	ListenSocket                                 string // Where orchestrator HTTP should listen for unix socket (default: empty; when given, TCP is disabled)
 	AgentsServerPort                             string // port orchestrator agents talk back to
 	MySQLTopologyUser                            string
 	MySQLTopologyPassword                        string // my.cnf style configuration file from where to pick credentials. Expecting `user`, `password` under `[client]` section
@@ -49,6 +50,7 @@ type Configuration struct {
 	MySQLTopologyMaxPoolConnections              int    // Max concurrent connections on any topology instance
 	DatabaselessMode__experimental               bool   // !!!EXPERIMENTAL!!! Orchestrator will execute without speaking to a backend database; super-standalone mode
 	MySQLOrchestratorHost                        string
+	MySQLOrchestratorMaxPoolConnections          int    // The maximum size of the connection pool to the Orchestrator backend.
 	MySQLOrchestratorPort                        uint
 	MySQLOrchestratorDatabase                    string
 	MySQLOrchestratorUser                        string
@@ -71,6 +73,7 @@ type Configuration struct {
 	SnapshotTopologiesIntervalHours              uint     // Interval in hour between snapshot-topologies invocation. Default: 0 (disabled)
 	InstanceBulkOperationsWaitTimeoutSeconds     uint     // Time to wait on a single instance when doing bulk (many instances) operation
 	ActiveNodeExpireSeconds                      uint     // Maximum time to wait for active node to send keepalive before attempting to take over as active node.
+	NodeHealthExpiry                             bool     // Do we expire the node_health table? Usually this is true but it might be disabled on command line tools if an orchestrator daemon is running.
 	HostnameResolveMethod                        string   // Method by which to "normalize" hostname ("none"/"default"/"cname")
 	MySQLHostnameResolveMethod                   string   // Method by which to "normalize" hostname via MySQL server. ("none"/"@@hostname"/"@@report_host"; default "@@hostname")
 	SkipBinlogServerUnresolveCheck               bool     // Skip the double-check that an unresolved hostname resolves back to same hostname for binlog servers
@@ -101,14 +104,16 @@ type Configuration struct {
 	DetectClusterAliasQuery                      string            // Optional query (executed on topology instance) that returns the alias of a cluster. Query will only be executed on cluster master (though until the topology's master is resovled it may execute on other/all slaves). If provided, must return one row, one column
 	DetectClusterDomainQuery                     string            // Optional query (executed on topology instance) that returns the VIP/CNAME/Alias/whatever domain name for the master of this cluster. Query will only be executed on cluster master (though until the topology's master is resovled it may execute on other/all slaves). If provided, must return one row, one column
 	DetectInstanceAliasQuery                     string            // Optional query (executed on topology instance) that returns the alias of an instance. If provided, must return one row, one column
+	DetectPromotionRuleQuery                     string            // Optional query (executed on topology instance) that returns the promotion rule of an instance. If provided, must return one row, one column.
 	DataCenterPattern                            string            // Regexp pattern with one group, extracting the datacenter name from the hostname
 	PhysicalEnvironmentPattern                   string            // Regexp pattern with one group, extracting physical environment info from hostname (e.g. combination of datacenter & prod/dev env)
 	DetectDataCenterQuery                        string            // Optional query (executed on topology instance) that returns the data center of an instance. If provided, must return one row, one column. Overrides DataCenterPattern and useful for installments where DC cannot be inferred by hostname
 	DetectPhysicalEnvironmentQuery               string            // Optional query (executed on topology instance) that returns the physical environment of an instance. If provided, must return one row, one column. Overrides PhysicalEnvironmentPattern and useful for installments where env cannot be inferred by hostname
 	DetectSemiSyncEnforcedQuery                  string            // Optional query (executed on topology instance) to determine whether semi-sync is fully enforced for master writes (async fallback is not allowed under any circumstance). If provided, must return one row, one column, value 0 or 1.
 	SupportFuzzyPoolHostnames                    bool              // Should "submit-pool-instances" command be able to pass list of fuzzy instances (fuzzy means non-fqdn, but unique enough to recognize). Defaults 'true', implies more queries on backend db
+	InstancePoolExpiryMinutes                    uint              // Time after which entries in database_instance_pool are expired (resubmit via `submit-pool-instances`)
 	PromotionIgnoreHostnameFilters               []string          // Orchestrator will not promote slaves with hostname matching pattern (via -c recovery; for example, avoid promoting dev-dedicated machines)
-	ServeAgentsHttp                              bool              // Spawn another HTTP interface dedicated for orcehstrator-agent
+	ServeAgentsHttp                              bool              // Spawn another HTTP interface dedicated for orchestrator-agent
 	AgentsUseSSL                                 bool              // When "true" orchestrator will listen on agents port with SSL as well as connect to agents via SSL
 	AgentsUseMutualTLS                           bool              // When "true" Use mutual TLS for the server to agent communication
 	AgentSSLSkipVerify                           bool              // When using SSL for the Agent, should we ignore SSL certification error
@@ -190,10 +195,12 @@ func newConfiguration() *Configuration {
 		Debug:                                        false,
 		EnableSyslog:                                 false,
 		ListenAddress:                                ":3000",
+		ListenSocket:                                 "",
 		AgentsServerPort:                             ":3001",
 		StatusEndpoint:                               "/api/status",
 		StatusSimpleHealth:                           true,
 		StatusOUVerify:                               false,
+		MySQLOrchestratorMaxPoolConnections:          128,              // limit concurrent conns to backend DB
 		MySQLOrchestratorPort:                        3306,
 		MySQLTopologyMaxPoolConnections:              3,
 		MySQLTopologyUseMutualTLS:                    false,
@@ -210,6 +217,7 @@ func newConfiguration() *Configuration {
 		DiscoverByShowSlaveHosts:                     false,
 		InstanceBulkOperationsWaitTimeoutSeconds:     10,
 		ActiveNodeExpireSeconds:                      5,
+		NodeHealthExpiry:                             true,
 		HostnameResolveMethod:                        "default",
 		MySQLHostnameResolveMethod:                   "@@hostname",
 		SkipBinlogServerUnresolveCheck:               true,
@@ -240,12 +248,14 @@ func newConfiguration() *Configuration {
 		DetectClusterAliasQuery:                      "",
 		DetectClusterDomainQuery:                     "",
 		DetectInstanceAliasQuery:                     "",
+		DetectPromotionRuleQuery:                     "",
 		DataCenterPattern:                            "",
 		PhysicalEnvironmentPattern:                   "",
 		DetectDataCenterQuery:                        "",
 		DetectPhysicalEnvironmentQuery:               "",
 		DetectSemiSyncEnforcedQuery:                  "",
 		SupportFuzzyPoolHostnames:                    true,
+		InstancePoolExpiryMinutes:                    60,
 		PromotionIgnoreHostnameFilters:               []string{},
 		ServeAgentsHttp:                              false,
 		AgentsUseSSL:                                 false,

@@ -38,6 +38,19 @@ const (
 	MustNotPromoteRule                          = "must_not"
 )
 
+// ParseCandidatePromotionRule returns a CandidatePromotionRule by name.
+// It returns an error if there is no known rule by the given name.
+func ParseCandidatePromotionRule(ruleName string) (CandidatePromotionRule, error) {
+	switch ruleName {
+	case "prefer", "neutral", "must_not":
+		return CandidatePromotionRule(ruleName), nil
+	case "must", "prefer_not":
+		return CandidatePromotionRule(""), fmt.Errorf("CandidatePromotionRule: %v not supported yet", ruleName)
+	default:
+		return CandidatePromotionRule(""), fmt.Errorf("Invalid CandidatePromotionRule: %v", ruleName)
+	}
+}
+
 // Instance represents a database instance, including its current configuration & status.
 // It presents important replication configuration and detailed replication status.
 type Instance struct {
@@ -371,7 +384,7 @@ func (this *Instance) StatusString() string {
 	if this.IsSlave() && !(this.Slave_SQL_Running && this.Slave_IO_Running) {
 		return "nonreplicating"
 	}
-	if this.IsSlave() && this.SecondsBehindMaster.Int64 > int64(config.Config.ReasonableMaintenanceReplicationLagSeconds) {
+	if this.IsSlave() && !this.HasReasonableMaintenanceReplicationLag() {
 		return "lag"
 	}
 	return "ok"
@@ -425,6 +438,9 @@ func (this *Instance) HumanReadableDescription() string {
 	}
 	if this.UsingPseudoGTID {
 		tokens = append(tokens, "P-GTID")
+	}
+	if this.IsDowntimed {
+		tokens = append(tokens, "downtimed")
 	}
 	description := fmt.Sprintf("[%s]", strings.Join(tokens, ","))
 	return description

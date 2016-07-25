@@ -820,6 +820,27 @@ var generateSQLPatches = []string{
 			topology_recovery
 			ADD COLUMN successor_alias varchar(128) DEFAULT NULL
 	`,
+	`
+		ALTER TABLE
+			database_instance
+			MODIFY cluster_name varchar(128) NOT NULL
+	`,
+	`
+		ALTER TABLE
+			node_health
+			ADD INDEX last_seen_active_idx (last_seen_active)
+	`,
+	`
+		ALTER TABLE
+			database_instance_maintenance
+			ADD COLUMN processing_node_hostname varchar(128) CHARACTER SET ascii NOT NULL,
+			ADD COLUMN processing_node_token varchar(128) NOT NULL
+	`,
+	`
+		ALTER TABLE
+			database_instance_maintenance
+			ADD COLUMN explicitly_bounded TINYINT UNSIGNED NOT NULL
+	`,
 }
 
 // Track if a TLS has already been configured for topology
@@ -877,6 +898,15 @@ func OpenOrchestrator() (*sql.DB, error) {
 	db, fromCache, err := sqlutils.GetDB(mysql_uri)
 	if err == nil && !fromCache {
 		initOrchestratorDB(db)
+
+		// do not show the password but do show what we connect to.
+		safe_mysql_uri := fmt.Sprintf("%s:?@tcp(%s:%d)/%s?timeout=%ds", config.Config.MySQLOrchestratorUser,
+			config.Config.MySQLOrchestratorHost, config.Config.MySQLOrchestratorPort, config.Config.MySQLOrchestratorDatabase, config.Config.MySQLConnectTimeoutSeconds)
+		log.Debugf("Connected to orchestrator backend: %v", safe_mysql_uri)
+		if config.Config.MySQLOrchestratorMaxPoolConnections > 0 {
+			log.Debugf("Orchestrator pool SetMaxOpenConns: %d", config.Config.MySQLOrchestratorMaxPoolConnections)
+			db.SetMaxOpenConns(config.Config.MySQLOrchestratorMaxPoolConnections)
+		}
 		db.SetMaxIdleConns(10)
 	}
 	return db, err

@@ -26,6 +26,7 @@ import (
 
 	"github.com/outbrain/golib/log"
 	"github.com/outbrain/golib/util"
+	"github.com/outbrain/orchestrator/go/agent"
 	"github.com/outbrain/orchestrator/go/config"
 	"github.com/outbrain/orchestrator/go/inst"
 	"github.com/outbrain/orchestrator/go/logic"
@@ -977,10 +978,21 @@ func Cli(command string, strict bool, instance string, destination string, owner
 				fmt.Println(clusterInstance.Key.DisplayString())
 			}
 		}
-	case registerCliCommand("which-cluster-osc-slaves", "Information", `Output a list of slaves in same cluster as given instance, that could serve as a pt-online-schema-change operation control slaves`):
+	case registerCliCommand("which-cluster-osc-slaves", "Information", `Output a list of slaves in a cluster, that could serve as a pt-online-schema-change operation control slaves`):
 		{
 			clusterName := getClusterName(clusterAlias, instanceKey)
 			instances, err := inst.GetClusterOSCSlaves(clusterName)
+			if err != nil {
+				log.Fatale(err)
+			}
+			for _, clusterInstance := range instances {
+				fmt.Println(clusterInstance.Key.DisplayString())
+			}
+		}
+	case registerCliCommand("which-cluster-gh-ost-slaves", "Information", `Output a list of slaves in a cluster, that could serve as a gh-ost working server`):
+		{
+			clusterName := getClusterName(clusterAlias, instanceKey)
+			instances, err := inst.GetClusterGhostSlaves(clusterName)
 			if err != nil {
 				log.Fatale(err)
 			}
@@ -1079,7 +1091,7 @@ func Cli(command string, strict bool, instance string, destination string, owner
 					log.Fatalf("Duration value must be non-negative. Given value: %d", durationSeconds)
 				}
 			}
-			maintenanceKey, err := inst.BeginBoundedMaintenance(instanceKey, inst.GetMaintenanceOwner(), reason, uint(durationSeconds))
+			maintenanceKey, err := inst.BeginBoundedMaintenance(instanceKey, inst.GetMaintenanceOwner(), reason, uint(durationSeconds), true)
 			if err == nil {
 				log.Infof("Maintenance key: %+v", maintenanceKey)
 				log.Infof("Maintenance duration: %d seconds", durationSeconds)
@@ -1213,7 +1225,11 @@ func Cli(command string, strict bool, instance string, destination string, owner
 	case registerCliCommand("register-candidate", "Instance, meta", `Indicate that a specific instance is a preferred candidate for master promotion`):
 		{
 			instanceKey = deduceInstanceKeyIfNeeded(instance, instanceKey, true)
-			err := inst.RegisterCandidateInstance(instanceKey, inst.CandidatePromotionRule(*config.RuntimeCLIFlags.PromotionRule))
+			promotionRule, err := inst.ParseCandidatePromotionRule(*config.RuntimeCLIFlags.PromotionRule)
+			if err != nil {
+				log.Fatale(err)
+			}
+			err = inst.RegisterCandidateInstance(instanceKey, promotionRule)
 			if err != nil {
 				log.Fatale(err)
 			}
@@ -1315,7 +1331,16 @@ func Cli(command string, strict bool, instance string, destination string, owner
 			inst.ReadClusters()
 			fmt.Println("Redeployed internal db")
 		}
-		// Help
+	case registerCliCommand("custom-command", "Agent", "Execute a custom command on the agent as defined in the agent conf"):
+		{
+			output, err := agent.CustomCommand(hostnameFlag, pattern)
+			if err != nil {
+				log.Fatale(err)
+			}
+
+			fmt.Printf("%v\n", output)
+		}
+	// Help
 	case "help":
 		{
 			fmt.Fprintf(os.Stderr, availableCommandsUsage())

@@ -288,8 +288,13 @@ func ReadTopologyInstance(instanceKey *InstanceKey) (*Instance, error) {
 		instance.MasterKey = *masterKey
 		instance.IsDetachedMaster = instance.MasterKey.IsDetached()
 		instance.SecondsBehindMaster = m.GetNullInt64("Seconds_Behind_Master")
+		if instance.SecondsBehindMaster.Valid && instance.SecondsBehindMaster.Int64 < 0 {
+			log.Warningf("Host: %+v, instance.SecondsBehindMaster < 0 [%+v], correcting to 0", instanceKey, instance.SecondsBehindMaster.Int64)
+			instance.SecondsBehindMaster.Int64 = 0
+		}
 		// And until told otherwise:
 		instance.SlaveLagSeconds = instance.SecondsBehindMaster
+
 		instance.AllowTLS = (m.GetString("Master_SSL_Allowed") == "Yes")
 		// Not breaking the flow even on error
 		slaveStatusFound = true
@@ -424,8 +429,12 @@ func ReadTopologyInstance(instanceKey *InstanceKey) (*Instance, error) {
 	}
 
 	if config.Config.SlaveLagQuery != "" && !isMaxScale {
-		err := db.QueryRow(config.Config.SlaveLagQuery).Scan(&instance.SlaveLagSeconds)
-		if err != nil {
+		if err := db.QueryRow(config.Config.SlaveLagQuery).Scan(&instance.SlaveLagSeconds); err == nil {
+			if instance.SlaveLagSeconds.Valid && instance.SlaveLagSeconds.Int64 < 0 {
+				log.Warningf("Host: %+v, instance.SlaveLagSeconds < 0 [%+v], correcting to 0", instanceKey, instance.SlaveLagSeconds.Int64)
+				instance.SlaveLagSeconds.Int64 = 0
+			}
+		} else {
 			instance.SlaveLagSeconds = instance.SecondsBehindMaster
 			logReadTopologyInstanceError(instanceKey, "SlaveLagQuery", err)
 		}
@@ -455,10 +464,31 @@ func ReadTopologyInstance(instanceKey *InstanceKey) (*Instance, error) {
 		err = ReadInstanceClusterAttributes(instance)
 		logReadTopologyInstanceError(instanceKey, "ReadInstanceClusterAttributes", err)
 	}
+
+	// First read the current PromotionRule from candidate_database_instance.
 	{
 		err = ReadInstancePromotionRule(instance)
 		logReadTopologyInstanceError(instanceKey, "ReadInstanceClusterAttributes", err)
 	}
+	// Then check if the instance wants to set a different PromotionRule.
+	// We'll set it here on their behalf so there's no race between the first
+	// time an instance is discovered, and setting a rule like "must_not".
+	if config.Config.DetectPromotionRuleQuery != "" && !isMaxScale {
+		var value string
+		err := db.QueryRow(config.Config.DetectPromotionRuleQuery).Scan(&value)
+		logReadTopologyInstanceError(instanceKey, "DetectPromotionRuleQuery", err)
+		promotionRule, err := ParseCandidatePromotionRule(value)
+		logReadTopologyInstanceError(instanceKey, "ParseCandidatePromotionRule", err)
+		if err == nil {
+			// We need to update candidate_database_instance.
+			// We register the rule even if it hasn't changed,
+			// to bump the last_suggested time.
+			instance.PromotionRule = promotionRule
+			err = RegisterCandidateInstance(instanceKey, promotionRule)
+			logReadTopologyInstanceError(instanceKey, "RegisterCandidateInstance", err)
+		}
+	}
+
 	if instance.ReplicationDepth == 0 && config.Config.DetectClusterAliasQuery != "" && !isMaxScale {
 		// Only need to do on masters
 		clusterAlias := ""
@@ -1096,6 +1126,42 @@ func GetClusterOSCSlaves(clusterName string) ([](*Instance), error) {
 	}
 
 	return result, nil
+}
+
+// GetClusterGhostSlaves returns a list of replicas that can serve as the connected servers
+// for a [gh-ost](https://github.com/github/gh-ost) operation. A gh-ost operation prefers to talk
+// to a RBR replica that has no children.
+func GetClusterGhostSlaves(clusterName string) (result [](*Instance), err error) {
+	condition := `
+			replication_depth > 0
+			and binlog_format = 'ROW'
+			and cluster_name = ?
+		`
+	instances, err := readInstancesByCondition(condition, sqlutils.Args(clusterName), "num_slave_hosts asc")
+	if err != nil {
+		return result, err
+	}
+
+	for _, instance := range instances {
+		skipThisHost := false
+		if instance.IsBinlogServer() {
+			skipThisHost = true
+		}
+		if !instance.IsLastCheckValid {
+			skipThisHost = true
+		}
+		if !instance.LogBinEnabled {
+			skipThisHost = true
+		}
+		if !instance.LogSlaveUpdatesEnabled {
+			skipThisHost = true
+		}
+		if !skipThisHost {
+			result = append(result, instance)
+		}
+	}
+
+	return result, err
 }
 
 // GetInstancesMaxLag returns the maximum lag in a set of instances
@@ -1937,7 +2003,7 @@ func RegisterCandidateInstance(instanceKey *InstanceKey, promotionRule Candidate
 	return ExecDBWriteFunc(writeFunc)
 }
 
-// RegisterCandidateInstance markes a given instance as suggested for successoring a master in the event of failover.
+// ExpireCandidateInstances removes stale master candidate suggestions.
 func ExpireCandidateInstances() error {
 	writeFunc := func() error {
 		_, err := db.ExecOrchestrator(`
