@@ -63,6 +63,7 @@ type Configuration struct {
 	MySQLOrchestratorUseMutualTLS                bool     // Turn on TLS authentication with the Orchestrator MySQL instance
 	MySQLConnectTimeoutSeconds                   int      // Number of seconds before connection is aborted (driver-side)
 	MySQLReadTimeoutSeconds                      int      // Number of seconds before mysql read operation is aborted (driver-side)
+	MySQLInterpolateParams                       bool     // Do not use sql prepare statement if true
 	DefaultInstancePort                          int      // In case port was not specified on command line
 	SlaveLagQuery                                string   // custom query to check on slave lg (e.g. heartbeat table)
 	SlaveStartPostWaitMilliseconds               int      // Time to wait after START SLAVE before re-readong instance (give slave chance to connect to master)
@@ -211,6 +212,7 @@ func newConfiguration() *Configuration {
 		MySQLOrchestratorUseMutualTLS:                false,
 		MySQLConnectTimeoutSeconds:                   2,
 		MySQLReadTimeoutSeconds:                      10,
+		MySQLInterpolateParams:                       false,
 		DefaultInstancePort:                          3306,
 		InstancePollSeconds:                          5,
 		ReadLongRunningQueries:                       true,
