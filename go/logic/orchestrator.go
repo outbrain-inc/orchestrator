@@ -144,7 +144,7 @@ func discoverInstance(instanceKey inst.InstanceKey) {
 			instanceKey,
 			discoverLatency.ElapsedMilliSeconds("totalLatency"),
 			discoverLatency.ElapsedMilliSeconds("backendLatency"),
-			0,
+			float64(0),
 			discoverLatency.ElapsedMilliSeconds("instanceLatency"),
 			err)
 		return
@@ -156,7 +156,7 @@ func discoverInstance(instanceKey inst.InstanceKey) {
 		instance.Version,
 		discoverLatency.ElapsedMilliSeconds("totalLatency"),
 		discoverLatency.ElapsedMilliSeconds("backendLatency"),
-		0,
+		float64(0),
 		discoverLatency.ElapsedMilliSeconds("instanceLatency"))
 
 	if atomic.LoadInt64(&isElectedNode) == 0 {
