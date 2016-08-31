@@ -33,6 +33,7 @@ import (
 	"github.com/outbrain/orchestrator/go/db"
 	"github.com/pmylund/go-cache"
 	"github.com/rcrowley/go-metrics"
+	"github.com/sjmudd/stopwatch"
 )
 
 const backendDBConcurrency = 20
@@ -79,9 +80,13 @@ func logReadTopologyInstanceError(instanceKey *InstanceKey, hint string, err err
 	return log.Errorf("ReadTopologyInstance(%+v) %+v: %+v", *instanceKey, hint, err)
 }
 
+func ReadTopologyInstance(instanceKey *InstanceKey) (*Instance, error) {
+	return TimedReadTopologyInstance(instanceKey, nil)
+}
+
 // ReadTopologyInstance connects to a topology MySQL instance and reads its configuration and
 // replication status. It writes read info into orchestrator's backend.
-func ReadTopologyInstance(instanceKey *InstanceKey) (*Instance, error) {
+func TimedReadTopologyInstance(instanceKey *InstanceKey, discoverLatency *stopwatch.NamedStopwatch) (*Instance, error) {
 	defer func() {
 		if err := recover(); err != nil {
 			logReadTopologyInstanceError(instanceKey, "Unexpected, aborting", fmt.Errorf("%+v", err))
@@ -103,6 +108,8 @@ func ReadTopologyInstance(instanceKey *InstanceKey) (*Instance, error) {
 		_ = UpdateInstanceLastAttemptedCheck(instanceKey)
 		return instance, fmt.Errorf("ReadTopologyInstance will not act on invalid instance key: %+v", *instanceKey)
 	}
+
+	discoverLatency.Start("instanceLatency")
 
 	db, err := db.OpenTopology(instanceKey.Hostname, instanceKey.Port)
 	if err != nil {
@@ -510,6 +517,7 @@ func ReadTopologyInstance(instanceKey *InstanceKey) (*Instance, error) {
 			logReadTopologyInstanceError(instanceKey, "WriteClusterDomainName", err)
 		}
 	}
+	discoverLatency.Stop("instanceLatency")
 
 Cleanup:
 	readTopologyInstanceCounter.Inc(1)
@@ -519,15 +527,19 @@ Cleanup:
 		instance.IsRecentlyChecked = true
 		instance.IsUpToDate = true
 		enqueueInstanceWrite(instance, instanceFound, err)
+		discoverLatency.Start("backendLatency")
 		WriteLongRunningProcesses(&instance.Key, longRunningProcesses)
+		discoverLatency.Stop("backendLatency")
 		return instance, nil
 	}
 
 	// Something is wrong, could be network-wise. Record that we
 	// tried to check the instance. last_attempted_check is also
 	// updated on success by writeInstance.
+	discoverLatency.Start("backendLatency")
 	_ = UpdateInstanceLastAttemptedCheck(instanceKey)
 	_ = UpdateInstanceLastChecked(&instance.Key)
+	discoverLatency.Stop("backendLatency")
 	return nil, fmt.Errorf("Failed ReadTopologyInstance")
 }
 
