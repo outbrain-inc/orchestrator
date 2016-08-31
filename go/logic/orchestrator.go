@@ -124,7 +124,9 @@ func discoverInstance(instanceKey inst.InstanceKey) {
 		return
 	}
 
+	discoverLatency.Start("backendLatency")
 	instance, found, err := inst.ReadInstance(&instanceKey)
+	discoverLatency.Stop("backendLatency")
 	if found && instance.IsUpToDate && instance.IsLastCheckValid {
 		// we've already discovered this one. Skip!
 		return
