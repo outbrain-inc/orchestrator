@@ -27,7 +27,8 @@ case "$1" in
   start)
     printf "%-50s" "Starting $NAME..."
     cd $DAEMON_PATH
-    PID=$(./$DAEMON $DAEMONOPTS >> /var/log/${NAME}.log 2>&1 & echo $!)
+    # Ensure orchestrator's environment is clean
+    PID=$(env -i ./$DAEMON $DAEMONOPTS >> /var/log/${NAME}.log 2>&1 & echo $!)
     #echo "Saving PID" $PID " to " $PIDFILE
     if [ -z $PID ]; then
       printf "%s\n" "Fail"
