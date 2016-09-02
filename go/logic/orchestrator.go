@@ -135,7 +135,7 @@ func discoverInstance(instanceKey inst.InstanceKey) {
 	discoveriesCounter.Inc(1)
 
 	// First we've ever heard of this instance. Continue investigation:
-	instance, err = inst.TimedReadTopologyInstance(&instanceKey, discoverLatency)
+	instance, err = inst.ReadTopologyInstanceX(&instanceKey, true, discoverLatency)
 	// panic can occur (IO stuff). Therefore it may happen
 	// that instance is nil. Check it.
 	if instance == nil {

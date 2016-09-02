@@ -61,6 +61,21 @@ func init() {
 	metrics.Register("instance.read_topology", readTopologyInstanceCounter)
 	metrics.Register("instance.read", readInstanceCounter)
 	metrics.Register("instance.write", writeInstanceCounter)
+
+	// spin off instance write buffer flushing
+	go func() {
+		flushTick := time.Tick(instanceFlushIntervalMilliseconds * time.Millisecond)
+		for {
+			// it is time to flush
+			select {
+			case <-flushTick:
+				flushInstanceWriteBuffer()
+			case <-forceFlushInstanceWriteBuffer:
+				flushInstanceWriteBuffer()
+			}
+		}
+	}()
+
 }
 
 // ExecDBWriteFunc chooses how to execute a write onto the database: whether synchronuously or not
@@ -81,12 +96,13 @@ func logReadTopologyInstanceError(instanceKey *InstanceKey, hint string, err err
 }
 
 func ReadTopologyInstance(instanceKey *InstanceKey) (*Instance, error) {
-	return TimedReadTopologyInstance(instanceKey, nil)
+	return ReadTopologyInstanceX(instanceKey, false, nil)
 }
 
-// ReadTopologyInstance connects to a topology MySQL instance and reads its configuration and
+// ReadTopologyInstanceX connects to a topology MySQL instance and reads its configuration and
 // replication status. It writes read info into orchestrator's backend.
-func TimedReadTopologyInstance(instanceKey *InstanceKey, discoverLatency *stopwatch.NamedStopwatch) (*Instance, error) {
+// Writes are optionally buffered.
+func ReadTopologyInstanceX(instanceKey *InstanceKey, bufferWrites bool, discoverLatency *stopwatch.NamedStopwatch) (*Instance, error) {
 	defer func() {
 		if err := recover(); err != nil {
 			logReadTopologyInstanceError(instanceKey, "Unexpected, aborting", fmt.Errorf("%+v", err))
@@ -540,8 +556,12 @@ Cleanup:
 		instance.IsLastCheckValid = true
 		instance.IsRecentlyChecked = true
 		instance.IsUpToDate = true
-		enqueueInstanceWrite(instance, instanceFound, err)
 		discoverLatency.Start("backendLatency")
+		if bufferWrites {
+			enqueueInstanceWrite(instance, instanceFound, err)
+		} else {
+			writeInstance(instance, instanceFound, err)
+		}
 		WriteLongRunningProcesses(&instance.Key, longRunningProcesses)
 		discoverLatency.Stop("backendLatency")
 		return instance, nil
@@ -1862,13 +1882,20 @@ type instanceUpdateObject struct {
 	lastError                error
 }
 
+// Up to instanceWriteBufferSize are flushed in one INSERT ODKU query.
 const instanceWriteBufferSize = 100
 
+// Max interval between buffer flushes
+const instanceFlushIntervalMilliseconds = 100
+
 var instanceWriteBuffer = make(chan instanceUpdateObject, instanceWriteBufferSize)
+var forceFlushInstanceWriteBuffer = make(chan bool)
 
 func enqueueInstanceWrite(instance *Instance, instanceWasActuallyFound bool, lastError error) {
 	if len(instanceWriteBuffer) == instanceWriteBufferSize {
-		flushInstanceWriteBuffer()
+		// Signal the "flushing" gorouting that there's work.
+		// We prefer doing all bulk flushes from one goroutine.
+		forceFlushInstanceWriteBuffer <- true
 	}
 	instanceWriteBuffer <- instanceUpdateObject{instance, instanceWasActuallyFound, lastError}
 }
@@ -1877,6 +1904,10 @@ func enqueueInstanceWrite(instance *Instance, instanceWasActuallyFound bool, las
 func flushInstanceWriteBuffer() {
 	var instances []*Instance
 	var lastseen []*Instance // instances to update with last_seen field
+
+	if len(instanceWriteBuffer) == 0 {
+		return
+	}
 
 	for i := 0; i < len(instanceWriteBuffer); i++ {
 		upd := <-instanceWriteBuffer
