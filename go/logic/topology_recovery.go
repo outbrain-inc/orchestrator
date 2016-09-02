@@ -288,9 +288,14 @@ func recoverDeadMasterInBinlogServerTopology(topologyRecovery *TopologyRecovery)
 
 // RecoverDeadMaster recovers a dead master, complete logic inside
 func RecoverDeadMaster(topologyRecovery *TopologyRecovery, skipProcesses bool) (promotedSlave *inst.Instance, lostSlaves [](*inst.Instance), err error) {
+	var cannotReplicateSlaves [](*inst.Instance)
 	analysisEntry := &topologyRecovery.AnalysisEntry
 	failedInstanceKey := &analysisEntry.AnalyzedInstanceKey
-	var cannotReplicateSlaves [](*inst.Instance)
+
+	// Validate failedInstanceKey to prevent unexpected damage
+	if failedInstanceKey == nil || !failedInstanceKey.IsValid() {
+		return nil, lostSlaves, topologyRecovery.AddError(fmt.Errorf("RecoverDeadMaster: Invalid failedInstanceKey: %+v, NOT recovering", failedInstanceKey))
+	}
 
 	inst.AuditOperation("recover-dead-master", failedInstanceKey, "problem found; will recover")
 	if !skipProcesses {
