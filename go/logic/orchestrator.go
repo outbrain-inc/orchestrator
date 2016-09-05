@@ -88,10 +88,11 @@ func acceptSignals() {
 // instance discovery per entry.
 func handleDiscoveryRequests() {
 	// create a pool of discovery workers
-	for i := uint(0); i < config.Config.DiscoveryMaxConcurrency; i++ {
-		go func() {
+	for i := 0; i < int(config.Config.DiscoveryMaxConcurrency); i++ {
+		go func(worker_id int) {
 			for {
 				instanceKey := discoveryQueue.Pop()
+				log.Debugf("worker %v picked %v from discoveryQueue, len %v", worker_id, instanceKey, discoveryQueue.Len())
 				// Possibly this used to be the elected node, but has
 				// been demoted, while still the queue is full.
 				if atomic.LoadInt64(&isElectedNode) != 1 {
@@ -101,13 +102,21 @@ func handleDiscoveryRequests() {
 				}
 				discoverInstance(instanceKey)
 			}
-		}()
+		}(i)
 	}
 }
 
 // discoverInstance will attempt discovering an instance (unless it is already up to date) and will
 // list down its master and slaves (if any) for further discovery.
 func discoverInstance(instanceKey inst.InstanceKey) {
+	start := time.Now()
+	defer func() {
+		discoveryTime := time.Since(start)
+		if discoveryTime > time.Duration(config.Config.InstancePollSeconds)*time.Second {
+			log.Warningf("discoverInstance for key %v took %.4fs", instanceKey, discoveryTime.Seconds())
+		}
+	}()
+
 	discoverLatency := stopwatch.NewNamedStopwatch()
 	discoverLatency.Add("totalLatency")
 	discoverLatency.Add("instanceLatency")
