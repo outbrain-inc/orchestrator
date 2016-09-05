@@ -1062,6 +1062,8 @@ func CheckAndRecover(specificInstance *inst.InstanceKey, candidateInstanceKey *i
 			log.Infof("CheckAndRecover: InstanceKey: %+v, candidateInstanceKey: %+v, "+
 				"skipProcesses: %v: NOT Recovering host (disabled globally)",
 				analysisEntry.AnalyzedInstanceKey, candidateInstanceKey, skipProcesses)
+			log.Infof("CheckAndRecover: NOT Recovering host (disabled globally): analysisEntry: %+v",
+				analysisEntry)
 		} else {
 			go executeCheckAndRecoverFunction(analysisEntry, candidateInstanceKey, false, skipProcesses)
 		}
