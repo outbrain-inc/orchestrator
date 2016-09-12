@@ -232,7 +232,7 @@ func ExpireHostnameUnresolve() error {
 				where last_registered < NOW() - INTERVAL ? MINUTE
 				`, config.Config.ExpiryHostnameResolvesMinutes,
 		)
-		return log.Errore(err)
+		return log.Errorf("ExpireHostnameUnresolve: %v", err)
 	}
 	return ExecDBWriteFunc(writeFunc)
 }
