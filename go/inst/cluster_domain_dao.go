@@ -48,7 +48,7 @@ func ExpireClusterDomainName() error {
 				where last_registered < NOW() - INTERVAL ? MINUTE
 				`, config.Config.ExpiryHostnameResolvesMinutes,
 		)
-		return log.Errorf("ExpireClusterDomainName: %v", err)
+		return log.Errore(err)
 	}
 	return ExecDBWriteFunc(writeFunc)
 }
