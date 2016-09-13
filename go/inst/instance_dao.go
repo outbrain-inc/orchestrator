@@ -1410,7 +1410,7 @@ func ForgetUnseenInstancesDifferentlyResolved() error {
 		`,
 	)
 	if err != nil {
-		return log.Errorf("ForgetUnseenInstancesDifferentlyResolved: %v", err)
+		return log.Errore(err)
 	}
 	rows, err := sqlResult.RowsAffected()
 	if err != nil {
@@ -2036,7 +2036,7 @@ func ForgetLongUnseenInstances() error {
 		config.Config.UnseenInstanceForgetHours,
 	)
 	if err != nil {
-		return log.Errorf("ForgetLongUnseenInstances: %v", err)
+		return log.Errore(err)
 	}
 	rows, err := sqlResult.RowsAffected()
 	if err != nil {
@@ -2215,10 +2215,7 @@ func RecordInstanceBinlogFileHistory() error {
 				last_seen < NOW() - INTERVAL ? DAY
 				`, config.Config.BinlogFileHistoryDays,
 			)
-			if err != nil {
-				log.Errorf("RecordInstanceBinlogFileHistory delete: %v", err)
-			}
-			return err
+			return log.Errore(err)
 		}
 		ExecDBWriteFunc(writeFunc)
 	}
@@ -2242,10 +2239,7 @@ func RecordInstanceBinlogFileHistory() error {
 					binary_log_pos = VALUES(binary_log_pos)
 				`,
 		)
-		if err != nil {
-			log.Errorf("RecordInstanceBinlogFileHistory insert: %v", err)
-		}
-		return err
+		return log.Errore(err)
 	}
 	return ExecDBWriteFunc(writeFunc)
 }

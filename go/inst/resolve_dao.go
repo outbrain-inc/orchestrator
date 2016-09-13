@@ -53,7 +53,7 @@ func WriteResolvedHostname(hostname string, resolvedHostname string) error {
 			hostname,
 			resolvedHostname)
 		if err != nil {
-			return log.Errorf("failed to insert %v into hostname_resolve: %v", hostname, err)
+			return log.Errore(err)
 		}
 		if hostname != resolvedHostname {
 			// history is only interesting when there's actually something to resolve...
@@ -68,9 +68,6 @@ func WriteResolvedHostname(hostname string, resolvedHostname string) error {
 			`,
 				hostname,
 				resolvedHostname)
-			if err != nil {
-				log.Errorf("failed to insert %v into hostname_resolve_history: %v", hostname, err)
-			}
 		}
 		log.Debugf("WriteResolvedHostname: resolved %s to %s", hostname, resolvedHostname)
 		writeResolvedHostnameCounter.Inc(1)
@@ -232,7 +229,7 @@ func ExpireHostnameUnresolve() error {
 				where last_registered < NOW() - INTERVAL ? MINUTE
 				`, config.Config.ExpiryHostnameResolvesMinutes,
 		)
-		return log.Errorf("ExpireHostnameUnresolve: %v", err)
+		return log.Errore(err)
 	}
 	return ExecDBWriteFunc(writeFunc)
 }

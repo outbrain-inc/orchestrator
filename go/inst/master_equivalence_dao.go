@@ -124,7 +124,7 @@ func ExpireMasterPositionEquivalence() error {
 				where last_suggested < NOW() - INTERVAL ? HOUR
 				`, config.Config.UnseenInstanceForgetHours,
 		)
-		return log.Errorf("ExpireMasterPositionEquivalence: %v", err)
+		return log.Errore(err)
 	}
 	return ExecDBWriteFunc(writeFunc)
 }

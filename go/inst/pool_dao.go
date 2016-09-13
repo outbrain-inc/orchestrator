@@ -135,5 +135,5 @@ func ExpirePoolInstances() error {
 			`,
 		config.Config.InstancePoolExpiryMinutes,
 	)
-	return log.Errorf("ExpirePoolInstances: %v", err)
+	return log.Errore(err)
 }

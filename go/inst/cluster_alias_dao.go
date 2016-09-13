@@ -112,10 +112,7 @@ func UpdateClusterAliases() error {
 				  group by
 				    suggested_cluster_alias
 			`, DowntimeLostInRecoveryMessage)
-		if err != nil {
-			log.Errorf("UpdateClusterAliases: %v", err)
-		}
-		return err
+		return log.Errore(err)
 	}
 	return ExecDBWriteFunc(writeFunc)
 }
@@ -130,10 +127,7 @@ func ReplaceAliasClusterName(oldClusterName string, newClusterName string) error
 				where cluster_name = ?
 			`,
 			newClusterName, oldClusterName)
-		if err != nil {
-			log.Errorf("ReplaceAliasClusterName: %v", err)
-		}
-		return err
+		return log.Errore(err)
 	}
 	return ExecDBWriteFunc(writeFunc)
 }
