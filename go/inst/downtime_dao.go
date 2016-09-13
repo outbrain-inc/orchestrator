@@ -19,6 +19,7 @@ package inst
 import (
 	"fmt"
 	"github.com/outbrain/golib/log"
+	"github.com/outbrain/golib/sqlutils"
 	"github.com/outbrain/orchestrator/go/config"
 	"github.com/outbrain/orchestrator/go/db"
 )
@@ -88,25 +89,28 @@ func EndDowntime(instanceKey *InstanceKey) error {
 
 // ExpireDowntime will remove the maintenance flag on old downtimes
 func ExpireDowntime() error {
-	{
-		res, err := db.ExecOrchestrator(`
+	dbh, err := db.OpenOrchestrator()
+	if err != nil {
+		return log.Errorf("ExpireDowntime: failed to get db handle: %v", err)
+	}
+
+	res, err := sqlutils.Exec(dbh, `
 			delete from
 				database_instance_downtime
 			where
 				downtime_active is null
 				and end_timestamp < NOW() - INTERVAL ? DAY 
 			`,
-			config.Config.MaintenancePurgeDays,
-		)
-		if err != nil {
-			return log.Errore(err)
-		}
-		if rowsAffected, _ := res.RowsAffected(); rowsAffected > 0 {
-			AuditOperation("expire-downtime", nil, fmt.Sprintf("Purged %d historical entries", rowsAffected))
-		}
+		config.Config.MaintenancePurgeDays,
+	)
+	if err != nil {
+		return log.Errorf("ExpireDowntime: %v", err)
 	}
-	{
-		res, err := db.ExecOrchestrator(`
+	if rowsAffected, _ := res.RowsAffected(); rowsAffected > 0 {
+		AuditOperation("expire-downtime", nil, fmt.Sprintf("Purged %d historical entries", rowsAffected))
+	}
+
+	res, err = sqlutils.Exec(dbh, `
 			update
 				database_instance_downtime
 			set  
@@ -115,13 +119,12 @@ func ExpireDowntime() error {
 				downtime_active = 1
 				and end_timestamp < NOW() 
 			`,
-		)
-		if err != nil {
-			return log.Errore(err)
-		}
-		if rowsAffected, _ := res.RowsAffected(); rowsAffected > 0 {
-			AuditOperation("expire-downtime", nil, fmt.Sprintf("Expired %d entries", rowsAffected))
-		}
+	)
+	if err != nil {
+		return log.Errorf("ExpireDowntime: %v", err)
+	}
+	if rowsAffected, _ := res.RowsAffected(); rowsAffected > 0 {
+		AuditOperation("expire-downtime", nil, fmt.Sprintf("Expired %d entries", rowsAffected))
 	}
 
 	return nil
