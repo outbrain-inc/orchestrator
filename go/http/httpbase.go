@@ -53,7 +53,7 @@ func isAuthorizedForAction(req *http.Request, user auth.User) bool {
 				// read only
 				return false
 			}
-			// passed authentication ==> writeable
+			// passed authentication ==> writable
 			return true
 		}
 	case "proxy":

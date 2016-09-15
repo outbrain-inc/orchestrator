@@ -335,7 +335,7 @@ function openNodeModal(node) {
   addNodeModalDataAttribute("Version", node.Version);
   var td = addNodeModalDataAttribute("Read only", booleanString(node.ReadOnly));
   $('#node_modal button[data-btn=set-read-only]').appendTo(td.find("div"))
-  $('#node_modal button[data-btn=set-writeable]').appendTo(td.find("div"))
+  $('#node_modal button[data-btn=set-writable]').appendTo(td.find("div"))
 
   addNodeModalDataAttribute("Has binary logs", booleanString(node.LogBinEnabled));
   if (node.LogBinEnabled) {
@@ -420,8 +420,8 @@ function openNodeModal(node) {
   $('#node_modal button[data-btn=set-read-only]').click(function() {
     apiCommand("/api/set-read-only/" + node.Key.Hostname + "/" + node.Key.Port);
   });
-  $('#node_modal button[data-btn=set-writeable]').click(function() {
-    apiCommand("/api/set-writeable/" + node.Key.Hostname + "/" + node.Key.Port);
+  $('#node_modal button[data-btn=set-writable]').click(function() {
+    apiCommand("/api/set-writable/" + node.Key.Hostname + "/" + node.Key.Port);
   });
   $('#node_modal button[data-btn=enable-gtid]').click(function() {
     var message = "<p>Are you sure you wish to enable GTID on <code><strong>" + node.Key.Hostname + ":" + node.Key.Port +
@@ -493,9 +493,9 @@ function openNodeModal(node) {
   }
 
   $('#node_modal button[data-btn=set-read-only]').hide();
-  $('#node_modal button[data-btn=set-writeable]').hide();
+  $('#node_modal button[data-btn=set-writable]').hide();
   if (node.ReadOnly) {
-    $('#node_modal button[data-btn=set-writeable]').show();
+    $('#node_modal button[data-btn=set-writable]').show();
   } else {
     $('#node_modal button[data-btn=set-read-only]').show();
   }
@@ -800,7 +800,7 @@ function renderInstanceElement(popoverElement, instance, renderType) {
       popoverElement.find("h3 div.pull-right").prepend('<span class="glyphicon glyphicon-globe" title="Using Pseudo GTID"></span> ');
     }
     if (!instance.ReadOnly) {
-      popoverElement.find("h3 div.pull-right").prepend('<span class="glyphicon glyphicon-pencil" title="Writeable"></span> ');
+      popoverElement.find("h3 div.pull-right").prepend('<span class="glyphicon glyphicon-pencil" title="Writable"></span> ');
     }
     if (instance.isMostAdvancedOfSiblings) {
       popoverElement.find("h3 div.pull-right").prepend('<span class="glyphicon glyphicon-star" title="Most advanced slave"></span> ');

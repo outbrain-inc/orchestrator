@@ -97,7 +97,7 @@ func ReadTopologyInstance(instanceKey *InstanceKey) (*Instance, error) {
 	slaveStatusFound := false
 	var resolveErr error
 
-	// Before we even begin anything, declare that we're about to cehck this instance.If anything goes wrong network-wise,
+	// Before we even begin anything, declare that we're about to check this instance. If anything goes wrong network-wise,
 	// this is our source of truth in terms of instance being inaccessible
 	_ = UpdateInstanceLastAttemptedCheck(instanceKey)
 
@@ -795,11 +795,11 @@ func ReadClusterInstances(clusterName string) ([](*Instance), error) {
 	return readInstancesByCondition(condition, sqlutils.Args(clusterName), "")
 }
 
-// ReadClusterWriteableMaster returns the/a writeable master of this cluster
+// ReadClusterWritableMaster returns the/a writable master of this cluster
 // Typically, the cluster name indicates the master of the cluster. However, in circular
 // master-master replication one master can assume the name of the cluster, and it is
-// not guaranteed that it is the writeable one.
-func ReadClusterWriteableMaster(clusterName string) ([](*Instance), error) {
+// not guaranteed that it is the writable one.
+func ReadClusterWritableMaster(clusterName string) ([](*Instance), error) {
 	condition := `
 		cluster_name = ?
 		and read_only = 0
@@ -808,9 +808,9 @@ func ReadClusterWriteableMaster(clusterName string) ([](*Instance), error) {
 	return readInstancesByCondition(condition, sqlutils.Args(clusterName), "replication_depth asc")
 }
 
-// ReadWriteableClustersMasters returns writeable masters of all clusters, but only one
-// per cluster, in similar logic to ReadClusterWriteableMaster
-func ReadWriteableClustersMasters() (instances [](*Instance), err error) {
+// ReadWritableClustersMasters returns writable masters of all clusters, but only one
+// per cluster, in similar logic to ReadClusterWritableMaster
+func ReadWritableClustersMasters() (instances [](*Instance), err error) {
 	condition := `
 		read_only = 0
 		and (replication_depth = 0 or is_co_master)
@@ -1587,7 +1587,7 @@ func HeuristicallyApplyClusterDomainInstanceAttribute(clusterName string) (insta
 		return nil, fmt.Errorf("Cannot find domain name for cluster %+v", clusterName)
 	}
 
-	masters, err := ReadClusterWriteableMaster(clusterName)
+	masters, err := ReadClusterWritableMaster(clusterName)
 	if err != nil {
 		return nil, err
 	}

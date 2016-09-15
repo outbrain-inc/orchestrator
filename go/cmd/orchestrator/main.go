@@ -430,12 +430,12 @@ Cheatsheet:
             orchestrator -c set-read-only
                 -i not given, implicitly assumed local hostname
 
-        set-writeable
-            Turn an instance writeable, via SET GLOBAL read_only := 0. Example:
+        set-writable
+            Turn an instance writable, via SET GLOBAL read_only := 0. Example:
 
-            orchestrator -c set-writeable -i instance.to.turn.writeable.com
+            orchestrator -c set-writable -i instance.to.turn.writable.com
 
-            orchestrator -c set-writeable
+            orchestrator -c set-writable
                 -i not given, implicitly assumed local hostname
 
     Binlog commands
@@ -539,7 +539,7 @@ Cheatsheet:
                 -i not given, implicitly assumed local hostname
 
         all-clusters-masters
-            List of writeable masters, one per cluster.
+            List of writable masters, one per cluster.
 			For most single-master topologies, this is trivially the master.
 			For active-active master-master topologies, this ensures only one of
 			the masters is returned.
@@ -737,7 +737,7 @@ Cheatsheet:
 
         begin-maintenance
             Request a maintenance lock on an instance. Topology changes require placing locks on the minimal set of
-            affected instances, so as to avoid an incident of two uncoordinated operations on a smae instance (leading
+            affected instances, so as to avoid an incident of two uncoordinated operations on a same instance (leading
             to possible chaos). Locks are placed in the backend database, and so multiple orchestrator instances are safe.
             Operations automatically acquire locks and release them. This command manually acquires a lock, and will
             block other operations on the instance until lock is released.

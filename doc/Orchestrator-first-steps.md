@@ -118,7 +118,7 @@ You are easily able to see what the following do:
 	$ orchestrator -c start-slave -i a.slave.8.instance.com
 	$ orchestrator -c restart-slave -i a.slave.8.instance.com
 	$ orchestrator -c set-read-only -i a.slave.8.instance.com
-	$ orchestrator -c set-writeable -i a.slave.8.instance.com
+	$ orchestrator -c set-writable -i a.slave.8.instance.com
 
 Break replication by messing with a slave's binlog coordinates:
 
