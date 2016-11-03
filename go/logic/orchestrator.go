@@ -32,6 +32,7 @@ import (
 	"github.com/outbrain/orchestrator/go/process"
 	"github.com/patrickmn/go-cache"
 	"github.com/rcrowley/go-metrics"
+	"github.com/sjmudd/stopwatch"
 )
 
 // discoveryQueue is a channel of deduplicated instanceKey-s
@@ -87,10 +88,11 @@ func acceptSignals() {
 // instance discovery per entry.
 func handleDiscoveryRequests() {
 	// create a pool of discovery workers
-	for i := uint(0); i < config.Config.DiscoveryMaxConcurrency; i++ {
-		go func() {
+	for i := 0; i < int(config.Config.DiscoveryMaxConcurrency); i++ {
+		go func(worker_id int) {
 			for {
 				instanceKey := discoveryQueue.Pop()
+				log.Debugf("worker %v picked %v from discoveryQueue, len %v", worker_id, instanceKey, discoveryQueue.Len())
 				// Possibly this used to be the elected node, but has
 				// been demoted, while still the queue is full.
 				if atomic.LoadInt64(&isElectedNode) != 1 {
@@ -100,7 +102,7 @@ func handleDiscoveryRequests() {
 				}
 				discoverInstance(instanceKey)
 			}
-		}()
+		}(i)
 	}
 }
 
@@ -108,6 +110,18 @@ func handleDiscoveryRequests() {
 // list down its master and slaves (if any) for further discovery.
 func discoverInstance(instanceKey inst.InstanceKey) {
 	start := time.Now()
+	defer func() {
+		discoveryTime := time.Since(start)
+		if discoveryTime > time.Duration(config.Config.InstancePollSeconds)*time.Second {
+			log.Warningf("discoverInstance for key %v took %.4fs", instanceKey, discoveryTime.Seconds())
+		}
+	}()
+
+	discoverLatency := stopwatch.NewNamedStopwatch()
+	discoverLatency.Add("totalLatency")
+	discoverLatency.Add("instanceLatency")
+	discoverLatency.Add("backendLatency")
+	discoverLatency.Start("totalLatency")
 
 	instanceKey.Formalize()
 	if !instanceKey.IsValid() {
@@ -119,7 +133,9 @@ func discoverInstance(instanceKey inst.InstanceKey) {
 		return
 	}
 
+	discoverLatency.Start("backendLatency")
 	instance, found, err := inst.ReadInstance(&instanceKey)
+	discoverLatency.Stop("backendLatency")
 	if found && instance.IsUpToDate && instance.IsLastCheckValid {
 		// we've already discovered this one. Skip!
 		return
@@ -128,16 +144,29 @@ func discoverInstance(instanceKey inst.InstanceKey) {
 	discoveriesCounter.Inc(1)
 
 	// First we've ever heard of this instance. Continue investigation:
-	instance, err = inst.ReadTopologyInstance(&instanceKey)
+	instance, err = inst.ReadTopologyInstanceX(&instanceKey, true, discoverLatency)
 	// panic can occur (IO stuff). Therefore it may happen
 	// that instance is nil. Check it.
 	if instance == nil {
 		failedDiscoveriesCounter.Inc(1)
-		log.Warningf("discoverInstance(%+v) instance is nil in %.3fs, error=%+v", instanceKey, time.Since(start).Seconds(), err)
+		log.Warningf("discoverInstance(%+v) instance is nil in %.0f ms (Backend: %.0f ms, BE Update1: %.0f ms, Instance: %.0f ms), error=%+v",
+			instanceKey,
+			discoverLatency.ElapsedMilliSeconds("totalLatency"),
+			discoverLatency.ElapsedMilliSeconds("backendLatency"),
+			float64(0),
+			discoverLatency.ElapsedMilliSeconds("instanceLatency"),
+			err)
 		return
 	}
 
-	log.Debugf("Discovered host: %+v, master: %+v, version: %+v in %.3fs", instance.Key, instance.MasterKey, instance.Version, time.Since(start).Seconds())
+	log.Debugf("Discovered host: %+v, master: %+v, version: %+v in %.0f ms (Backend: %.0f ms, BE Update1: %0.f ms, Instance: %.0f ms)",
+		instance.Key,
+		instance.MasterKey,
+		instance.Version,
+		discoverLatency.ElapsedMilliSeconds("totalLatency"),
+		discoverLatency.ElapsedMilliSeconds("backendLatency"),
+		float64(0),
+		discoverLatency.ElapsedMilliSeconds("instanceLatency"))
 
 	if atomic.LoadInt64(&isElectedNode) == 0 {
 		// Maybe this node was elected before, but isn't elected anymore.
@@ -208,7 +237,7 @@ func ContinuousDiscovery() {
 						log.Errore(err)
 					}
 
-					log.Debugf("outdated keys: %+v", instanceKeys)
+					log.Debugf("polling %d outdated keys", len(instanceKeys))
 					for _, instanceKey := range instanceKeys {
 						instanceKey := instanceKey
 
