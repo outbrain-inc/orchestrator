@@ -432,6 +432,25 @@ func formatEventCleanly(event BinlogEvent, length *int) string {
 	return fmt.Sprintf("%+v %+v; %+v", rpad(event.Coordinates, length), event.EventType, strings.Split(strings.TrimSpace(event.Info), "\n")[0])
 }
 
+// Only do special filtering if instance is MySQL-5.7 and other
+// is MySQL-5.6 and in pseudo-gtid mode.
+func special56To57filterProcessing(instance *Instance, other *Instance) bool {
+	return instance.NameAndMajorVersionString() == "MySQL-5.7" && // 5.7 slave
+		other.NameAndMajorVersionString() == "MySQL-5.6" && // replicating under 5.6 master
+		instance.UsingPseudoGTID // should be this implicitly but check explicitly
+}
+
+// The event type to filter out
+const anonymousGTIDNextEvent = "SET @@SESSION.GTID_NEXT= 'ANONYMOUS'"
+
+// check if the event is one we want to skip.
+func specialEventToSkip(event *BinlogEvent) bool {
+	if event != nil && strings.Index(event.Info, anonymousGTIDNextEvent) >= 0 {
+		return true
+	}
+	return false
+}
+
 // GetNextBinlogCoordinatesToMatch is given a twin-coordinates couple for a would-be slave (instance) and another
 // instance (other).
 // This is part of the match-below process, and is the heart of the operation: matching the binlog events starting
@@ -447,6 +466,9 @@ func GetNextBinlogCoordinatesToMatch(
 	maxBinlogCoordinates *BinlogCoordinates,
 	other *Instance,
 	otherCoordinates BinlogCoordinates) (*BinlogCoordinates, int, error) {
+
+	// for 5.6 to 5.7 replication special processing may be needed.
+	applySpecialProcessing := special56To57filterProcessing(instance, other)
 
 	// create instanceCursor for scanning instance binlog events
 	fetchNextEvents := func(binlogCoordinates BinlogCoordinates) ([]BinlogEvent, error) {
@@ -477,13 +499,21 @@ func GetNextBinlogCoordinatesToMatch(
 		)
 
 		{
-			// Extract next binlog/relaylog entry from instance:
-			event, err := instanceCursor.nextRealEvent(0)
-			if err != nil {
-				return nil, noMatchedEvents, log.Errore(err)
-			}
-			if event != nil {
-				lastConsumedEventCoordinates = event.Coordinates
+			// we may need to skip Anonymous GTID Next Events so loop here over any we find
+			var event *BinlogEvent
+			var err error
+			for done := false; !done; {
+				// Extract next binlog/relaylog entry from instance:
+				event, err = instanceCursor.nextRealEvent(0)
+				if err != nil {
+					return nil, noMatchedEvents, log.Errore(err)
+				}
+				if event != nil {
+					lastConsumedEventCoordinates = event.Coordinates
+				}
+				if event == nil || !applySpecialProcessing || !specialEventToSkip(event) {
+					done = true
+				}
 			}
 
 			switch instanceCoordinates.Type {
