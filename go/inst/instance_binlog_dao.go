@@ -434,10 +434,35 @@ func formatEventCleanly(event BinlogEvent, length *int) string {
 
 // Only do special filtering if instance is MySQL-5.7 and other
 // is MySQL-5.6 and in pseudo-gtid mode.
-func special56To57filterProcessing(instance *Instance, other *Instance) bool {
-	return instance.NameAndMajorVersionString() == "MySQL-5.7" && // 5.7 slave
-		other.NameAndMajorVersionString() == "MySQL-5.6" && // replicating under 5.6 master
-		instance.UsingPseudoGTID // should be this implicitly but check explicitly
+func special56To57filterProcessing(instance *Instance, other *Instance) (bool, bool, error) {
+	// be paranoid
+	if instance == nil || other == nil {
+		return false, false, fmt.Errorf("special56To57filterProcessing: instance or other is nil. Should not happen")
+	}
+
+	filterInstance := instance.NameAndMajorVersionString() == "MySQL-5.7" && // 5.7 slave
+		other.NameAndMajorVersionString() == "MySQL-5.6" // replicating under 5.6 master
+
+	// The logic for other is a bit weird and may require us
+	// to check the instance's master.  To avoid this do some
+	// preliminary checks first to avoid the "master" access
+	// unless absolutely needed.
+
+	if instance.LogBinEnabled || // instance writes binlogs (not relay logs)
+		instance.NameAndMajorVersionString() != "MySQL-5.7" || // instance NOT 5.7 slave
+		other.NameAndMajorVersionString() != "MySQL-5.7" { // new master is NOT  5.7
+		return filterInstance, false /* good exit status avoiding checking master */, nil
+	}
+
+	// We need to check if the master is 5.6
+	master, err := GetInstanceMaster(instance)
+	if err != nil {
+		return false, false, log.Errorf("special56To57filterProcessing: can not GetInstanceMaster() for %+v. error=%+v", instance.Key, err)
+	}
+
+	filterOther := master.NameAndMajorVersionString() == "MySQL-5.6" // master(instance) == 5.6
+
+	return filterInstance, filterOther, nil
 }
 
 // The event type to filter out
@@ -467,8 +492,7 @@ func GetNextBinlogCoordinatesToMatch(
 	other *Instance,
 	otherCoordinates BinlogCoordinates) (*BinlogCoordinates, int, error) {
 
-	// for 5.6 to 5.7 replication special processing may be needed.
-	applySpecialProcessing := special56To57filterProcessing(instance, other)
+	const noMatchedEvents int = 0 // to make return statements' intent clearer
 
 	// create instanceCursor for scanning instance binlog events
 	fetchNextEvents := func(binlogCoordinates BinlogCoordinates) ([]BinlogEvent, error) {
@@ -482,7 +506,12 @@ func GetNextBinlogCoordinatesToMatch(
 	}
 	otherCursor := NewBinlogEventCursor(otherCoordinates, fetchOtherNextEvents)
 
-	const noMatchedEvents int = 0 // to make return statements' intent clearer
+	// for 5.6 to 5.7 replication special processing may be needed.
+	applyInstanceSpecialFiltering, applyOtherSpecialFiltering, err := special56To57filterProcessing(instance, other)
+	if err != nil {
+		return nil, noMatchedEvents, log.Errore(err)
+	}
+
 	var (
 		beautifyCoordinatesLength    int = 0
 		countMatchedEvents           int = 0
@@ -511,7 +540,7 @@ func GetNextBinlogCoordinatesToMatch(
 				if event != nil {
 					lastConsumedEventCoordinates = event.Coordinates
 				}
-				if event == nil || !applySpecialProcessing || !specialEventToSkip(event) {
+				if event == nil || !applyInstanceSpecialFiltering || !specialEventToSkip(event) {
 					done = true
 				}
 			}
@@ -576,11 +605,24 @@ func GetNextBinlogCoordinatesToMatch(
 			log.Debugf("> %s", formatEventCleanly(instanceEvent, &beautifyCoordinatesLength))
 		}
 		{
-			// Extract next binlog/relaylog entry from otherInstance (intended master):
-			event, err := otherCursor.nextRealEvent(0)
-			if err != nil {
-				return nil, noMatchedEvents, log.Errore(err)
+			// Extract next binlog/relaylog entry from other (intended master):
+			// START HACKING
+			// - this must have binlogs. We may need to filter anonymous events if we were processing
+			//   a relay log on instance and the instance's master runs 5.6
+			var event *BinlogEvent
+			var err error
+			for done := false; !done; {
+				// Extract next binlog entry from other:
+				event, err = otherCursor.nextRealEvent(0)
+				if err != nil {
+					return nil, noMatchedEvents, log.Errore(err)
+				}
+				if event == nil || !applyOtherSpecialFiltering || !specialEventToSkip(event) {
+					done = true
+				}
 			}
+			// END HACKING
+
 			if event == nil {
 				// end of binary logs for otherInstance: this is unexpected and means instance is more advanced
 				// than otherInstance
