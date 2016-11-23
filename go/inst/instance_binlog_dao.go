@@ -606,7 +606,6 @@ func GetNextBinlogCoordinatesToMatch(
 		}
 		{
 			// Extract next binlog/relaylog entry from other (intended master):
-			// START HACKING
 			// - this must have binlogs. We may need to filter anonymous events if we were processing
 			//   a relay log on instance and the instance's master runs 5.6
 			var event *BinlogEvent
@@ -621,7 +620,6 @@ func GetNextBinlogCoordinatesToMatch(
 					done = true
 				}
 			}
-			// END HACKING
 
 			if event == nil {
 				// end of binary logs for otherInstance: this is unexpected and means instance is more advanced
