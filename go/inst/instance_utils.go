@@ -43,8 +43,8 @@ func (this InstancesByExecBinlogCoordinates) Less(i, j int) bool {
 		return true
 	}
 	if this[i].ExecBinlogCoordinates.Equals(&this[j].ExecBinlogCoordinates) {
-		// Secondary sorting: "smaller" if not logging slave updates
-		if this[j].LogSlaveUpdatesEnabled && !this[i].LogSlaveUpdatesEnabled {
+		// Secondary sorting: "smaller" if not logging subordinate updates
+		if this[j].LogSubordinateUpdatesEnabled && !this[i].LogSubordinateUpdatesEnabled {
 			return true
 		}
 		// Next sorting: "smaller" if of higher version (this will be reversed eventually)

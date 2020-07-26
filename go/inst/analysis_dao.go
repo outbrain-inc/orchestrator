@@ -38,7 +38,7 @@ func init() {
 
 var recentInstantAnalysis = cache.New(time.Duration(config.Config.RecoveryPollSeconds*2)*time.Second, time.Second)
 
-// GetReplicationAnalysis will check for replication problems (dead master; unreachable master; etc)
+// GetReplicationAnalysis will check for replication problems (dead main; unreachable main; etc)
 func GetReplicationAnalysis(clusterName string, includeDowntimed bool, auditAnalysis bool) ([]ReplicationAnalysis, error) {
 	result := []ReplicationAnalysis{}
 
@@ -48,74 +48,74 @@ func GetReplicationAnalysis(clusterName string, includeDowntimed bool, auditAnal
 		analysisQueryReductionClause = `
 			HAVING
 				(MIN(
-		        		master_instance.last_checked <= master_instance.last_seen
-		        		AND master_instance.last_attempted_check <= master_instance.last_seen + INTERVAL (2 * ?) SECOND
+		        		main_instance.last_checked <= main_instance.last_seen
+		        		AND main_instance.last_attempted_check <= main_instance.last_seen + INTERVAL (2 * ?) SECOND
 		        	) IS TRUE /* AS is_last_check_valid */) = 0
-				OR (IFNULL(SUM(slave_instance.last_checked <= slave_instance.last_seen
-		                    AND slave_instance.slave_io_running = 0
-		                    AND slave_instance.last_io_error RLIKE 'error (connecting|reconnecting) to master'
-		                    AND slave_instance.slave_sql_running = 1),
-		                0) /* AS count_slaves_failing_to_connect_to_master */ > 0)
-				OR (IFNULL(SUM(slave_instance.last_checked <= slave_instance.last_seen),
-		                0) /* AS count_valid_slaves */ < COUNT(slave_instance.server_id) /* AS count_slaves */)
-				OR (IFNULL(SUM(slave_instance.last_checked <= slave_instance.last_seen
-		                    AND slave_instance.slave_io_running != 0
-		                    AND slave_instance.slave_sql_running != 0),
-		                0) /* AS count_valid_replicating_slaves */ < COUNT(slave_instance.server_id) /* AS count_slaves */)
+				OR (IFNULL(SUM(subordinate_instance.last_checked <= subordinate_instance.last_seen
+		                    AND subordinate_instance.subordinate_io_running = 0
+		                    AND subordinate_instance.last_io_error RLIKE 'error (connecting|reconnecting) to main'
+		                    AND subordinate_instance.subordinate_sql_running = 1),
+		                0) /* AS count_subordinates_failing_to_connect_to_main */ > 0)
+				OR (IFNULL(SUM(subordinate_instance.last_checked <= subordinate_instance.last_seen),
+		                0) /* AS count_valid_subordinates */ < COUNT(subordinate_instance.server_id) /* AS count_subordinates */)
+				OR (IFNULL(SUM(subordinate_instance.last_checked <= subordinate_instance.last_seen
+		                    AND subordinate_instance.subordinate_io_running != 0
+		                    AND subordinate_instance.subordinate_sql_running != 0),
+		                0) /* AS count_valid_replicating_subordinates */ < COUNT(subordinate_instance.server_id) /* AS count_subordinates */)
 				OR (MIN(
-		            master_instance.slave_sql_running = 1
-		            AND master_instance.slave_io_running = 0
-		            AND master_instance.last_io_error RLIKE 'error (connecting|reconnecting) to master'
-		          ) /* AS is_failing_to_connect_to_master */)
-				OR (COUNT(slave_instance.server_id) /* AS count_slaves */ > 0)
+		            main_instance.subordinate_sql_running = 1
+		            AND main_instance.subordinate_io_running = 0
+		            AND main_instance.last_io_error RLIKE 'error (connecting|reconnecting) to main'
+		          ) /* AS is_failing_to_connect_to_main */)
+				OR (COUNT(subordinate_instance.server_id) /* AS count_subordinates */ > 0)
 			`
 		args = append(args, config.Config.InstancePollSeconds)
 	}
-	// "OR count_slaves > 0" above is a recent addition, which, granted, makes some previous conditions redundant.
+	// "OR count_subordinates > 0" above is a recent addition, which, granted, makes some previous conditions redundant.
 	// It gives more output, and more "NoProblem" messages that I am now interested in for purpose of auditing in database_instance_analysis_changelog
 	query := fmt.Sprintf(`
 		    SELECT
-		        master_instance.hostname,
-		        master_instance.port,
-		        MIN(master_instance.master_host) AS master_host,
-		        MIN(master_instance.master_port) AS master_port,
-		        MIN(master_instance.cluster_name) AS cluster_name,
-		        MIN(IFNULL(cluster_alias.alias, master_instance.cluster_name)) AS cluster_alias,
+		        main_instance.hostname,
+		        main_instance.port,
+		        MIN(main_instance.main_host) AS main_host,
+		        MIN(main_instance.main_port) AS main_port,
+		        MIN(main_instance.cluster_name) AS cluster_name,
+		        MIN(IFNULL(cluster_alias.alias, main_instance.cluster_name)) AS cluster_alias,
 		        MIN(
-		        		master_instance.last_checked <= master_instance.last_seen
-		        		AND master_instance.last_attempted_check <= master_instance.last_seen + INTERVAL (2 * ?) SECOND
+		        		main_instance.last_checked <= main_instance.last_seen
+		        		AND main_instance.last_attempted_check <= main_instance.last_seen + INTERVAL (2 * ?) SECOND
 		        	) IS TRUE AS is_last_check_valid,
-		        MIN(master_instance.master_host IN ('' , '_')
-		            OR master_instance.master_port = 0
-								OR left(master_instance.master_host, 2) = '//') AS is_master,
-		        MIN(master_instance.is_co_master) AS is_co_master,
-		        MIN(CONCAT(master_instance.hostname,
+		        MIN(main_instance.main_host IN ('' , '_')
+		            OR main_instance.main_port = 0
+								OR left(main_instance.main_host, 2) = '//') AS is_main,
+		        MIN(main_instance.is_co_main) AS is_co_main,
+		        MIN(CONCAT(main_instance.hostname,
 		                ':',
-		                master_instance.port) = master_instance.cluster_name) AS is_cluster_master,
-		        COUNT(slave_instance.server_id) AS count_slaves,
-		        IFNULL(SUM(slave_instance.last_checked <= slave_instance.last_seen),
-		                0) AS count_valid_slaves,
-		        IFNULL(SUM(slave_instance.last_checked <= slave_instance.last_seen
-		                    AND slave_instance.slave_io_running != 0
-		                    AND slave_instance.slave_sql_running != 0),
-		                0) AS count_valid_replicating_slaves,
-		        IFNULL(SUM(slave_instance.last_checked <= slave_instance.last_seen
-		                    AND slave_instance.slave_io_running = 0
-		                    AND slave_instance.last_io_error RLIKE 'error (connecting|reconnecting) to master'
-		                    AND slave_instance.slave_sql_running = 1),
-		                0) AS count_slaves_failing_to_connect_to_master,
+		                main_instance.port) = main_instance.cluster_name) AS is_cluster_main,
+		        COUNT(subordinate_instance.server_id) AS count_subordinates,
+		        IFNULL(SUM(subordinate_instance.last_checked <= subordinate_instance.last_seen),
+		                0) AS count_valid_subordinates,
+		        IFNULL(SUM(subordinate_instance.last_checked <= subordinate_instance.last_seen
+		                    AND subordinate_instance.subordinate_io_running != 0
+		                    AND subordinate_instance.subordinate_sql_running != 0),
+		                0) AS count_valid_replicating_subordinates,
+		        IFNULL(SUM(subordinate_instance.last_checked <= subordinate_instance.last_seen
+		                    AND subordinate_instance.subordinate_io_running = 0
+		                    AND subordinate_instance.last_io_error RLIKE 'error (connecting|reconnecting) to main'
+		                    AND subordinate_instance.subordinate_sql_running = 1),
+		                0) AS count_subordinates_failing_to_connect_to_main,
 						IFNULL(SUM(
 									current_relay_log_file=prev_relay_log_file
 									and current_relay_log_pos=prev_relay_log_pos
 									and current_seen != prev_seen),
-								0) AS count_stale_slaves,
-		        MIN(master_instance.replication_depth) AS replication_depth,
-		        GROUP_CONCAT(slave_instance.Hostname, ':', slave_instance.Port) as slave_hosts,
+								0) AS count_stale_subordinates,
+		        MIN(main_instance.replication_depth) AS replication_depth,
+		        GROUP_CONCAT(subordinate_instance.Hostname, ':', subordinate_instance.Port) as subordinate_hosts,
 		        MIN(
-		            master_instance.slave_sql_running = 1
-		            AND master_instance.slave_io_running = 0
-		            AND master_instance.last_io_error RLIKE 'error (connecting|reconnecting) to master'
-		          ) AS is_failing_to_connect_to_master,
+		            main_instance.subordinate_sql_running = 1
+		            AND main_instance.subordinate_io_running = 0
+		            AND main_instance.last_io_error RLIKE 'error (connecting|reconnecting) to main'
+		          ) AS is_failing_to_connect_to_main,
 		        MIN(
 				    		database_instance_downtime.downtime_active IS NULL
 				    		OR database_instance_downtime.end_timestamp < NOW()
@@ -127,230 +127,230 @@ func GetReplicationAnalysis(clusterName string, includeDowntimed bool, auditAnal
 				    		IFNULL(TIMESTAMPDIFF(SECOND, NOW(), database_instance_downtime.end_timestamp), 0)
 				    	) AS downtime_remaining_seconds,
 			    	MIN(
-				    		master_instance.binlog_server
+				    		main_instance.binlog_server
 				    	) AS is_binlog_server,
 			    	MIN(
-				    		master_instance.pseudo_gtid
+				    		main_instance.pseudo_gtid
 				    	) AS is_pseudo_gtid,
 			    	MIN(
-				    		master_instance.supports_oracle_gtid
+				    		main_instance.supports_oracle_gtid
 				    	) AS supports_oracle_gtid,
 			    	SUM(
-				    		slave_instance.oracle_gtid
-				    	) AS count_oracle_gtid_slaves,
-			      IFNULL(SUM(slave_instance.last_checked <= slave_instance.last_seen
-	              AND slave_instance.oracle_gtid != 0),
-              0) AS count_valid_oracle_gtid_slaves,
+				    		subordinate_instance.oracle_gtid
+				    	) AS count_oracle_gtid_subordinates,
+			      IFNULL(SUM(subordinate_instance.last_checked <= subordinate_instance.last_seen
+	              AND subordinate_instance.oracle_gtid != 0),
+              0) AS count_valid_oracle_gtid_subordinates,
 			    	SUM(
-				    		slave_instance.binlog_server
-				    	) AS count_binlog_server_slaves,
-		        IFNULL(SUM(slave_instance.last_checked <= slave_instance.last_seen
-                  AND slave_instance.binlog_server != 0),
-              0) AS count_valid_binlog_server_slaves,
+				    		subordinate_instance.binlog_server
+				    	) AS count_binlog_server_subordinates,
+		        IFNULL(SUM(subordinate_instance.last_checked <= subordinate_instance.last_seen
+                  AND subordinate_instance.binlog_server != 0),
+              0) AS count_valid_binlog_server_subordinates,
 			    	MIN(
-				    		master_instance.mariadb_gtid
+				    		main_instance.mariadb_gtid
 				    	) AS is_mariadb_gtid,
 			    	SUM(
-				    		slave_instance.mariadb_gtid
-				    	) AS count_mariadb_gtid_slaves,
-		        IFNULL(SUM(slave_instance.last_checked <= slave_instance.last_seen
-                  AND slave_instance.mariadb_gtid != 0),
-              0) AS count_valid_mariadb_gtid_slaves,
-						IFNULL(SUM(slave_instance.log_bin
-							  AND slave_instance.log_slave_updates
-								AND slave_instance.binlog_format = 'STATEMENT'),
-              0) AS count_statement_based_loggin_slaves,
-						IFNULL(SUM(slave_instance.log_bin
-								AND slave_instance.log_slave_updates
-								AND slave_instance.binlog_format = 'MIXED'),
-              0) AS count_mixed_based_loggin_slaves,
-						IFNULL(SUM(slave_instance.log_bin
-								AND slave_instance.log_slave_updates
-								AND slave_instance.binlog_format = 'ROW'),
-              0) AS count_row_based_loggin_slaves,
+				    		subordinate_instance.mariadb_gtid
+				    	) AS count_mariadb_gtid_subordinates,
+		        IFNULL(SUM(subordinate_instance.last_checked <= subordinate_instance.last_seen
+                  AND subordinate_instance.mariadb_gtid != 0),
+              0) AS count_valid_mariadb_gtid_subordinates,
+						IFNULL(SUM(subordinate_instance.log_bin
+							  AND subordinate_instance.log_subordinate_updates
+								AND subordinate_instance.binlog_format = 'STATEMENT'),
+              0) AS count_statement_based_loggin_subordinates,
+						IFNULL(SUM(subordinate_instance.log_bin
+								AND subordinate_instance.log_subordinate_updates
+								AND subordinate_instance.binlog_format = 'MIXED'),
+              0) AS count_mixed_based_loggin_subordinates,
+						IFNULL(SUM(subordinate_instance.log_bin
+								AND subordinate_instance.log_subordinate_updates
+								AND subordinate_instance.binlog_format = 'ROW'),
+              0) AS count_row_based_loggin_subordinates,
 						COUNT(DISTINCT IF(
-							slave_instance.log_bin AND slave_instance.log_slave_updates,
-								substring_index(slave_instance.version, '.', 2),
+							subordinate_instance.log_bin AND subordinate_instance.log_subordinate_updates,
+								substring_index(subordinate_instance.version, '.', 2),
 								NULL)
 						) AS count_distinct_logging_major_versions
 		    FROM
-		        database_instance master_instance
+		        database_instance main_instance
 		            LEFT JOIN
-		        hostname_resolve ON (master_instance.hostname = hostname_resolve.hostname)
+		        hostname_resolve ON (main_instance.hostname = hostname_resolve.hostname)
 		            LEFT JOIN
-		        database_instance slave_instance ON (COALESCE(hostname_resolve.resolved_hostname,
-		                master_instance.hostname) = slave_instance.master_host
-		            	AND master_instance.port = slave_instance.master_port)
+		        database_instance subordinate_instance ON (COALESCE(hostname_resolve.resolved_hostname,
+		                main_instance.hostname) = subordinate_instance.main_host
+		            	AND main_instance.port = subordinate_instance.main_port)
 		            LEFT JOIN
-		        database_instance_maintenance ON (master_instance.hostname = database_instance_maintenance.hostname
-		        		AND master_instance.port = database_instance_maintenance.port
+		        database_instance_maintenance ON (main_instance.hostname = database_instance_maintenance.hostname
+		        		AND main_instance.port = database_instance_maintenance.port
 		        		AND database_instance_maintenance.maintenance_active = 1)
 		            LEFT JOIN
-		        database_instance_downtime ON (master_instance.hostname = database_instance_downtime.hostname
-		        		AND master_instance.port = database_instance_downtime.port
+		        database_instance_downtime ON (main_instance.hostname = database_instance_downtime.hostname
+		        		AND main_instance.port = database_instance_downtime.port
 		        		AND database_instance_downtime.downtime_active = 1)
 		        	LEFT JOIN
-		        cluster_alias ON (cluster_alias.cluster_name = master_instance.cluster_name)
+		        cluster_alias ON (cluster_alias.cluster_name = main_instance.cluster_name)
 						  LEFT JOIN
 						database_instance_recent_relaylog_history ON (
-								slave_instance.hostname = database_instance_recent_relaylog_history.hostname
-		        		AND slave_instance.port = database_instance_recent_relaylog_history.port)
+								subordinate_instance.hostname = database_instance_recent_relaylog_history.hostname
+		        		AND subordinate_instance.port = database_instance_recent_relaylog_history.port)
 		    WHERE
 		    	database_instance_maintenance.database_instance_maintenance_id IS NULL
-		    	AND ? IN ('', master_instance.cluster_name)
+		    	AND ? IN ('', main_instance.cluster_name)
 		    GROUP BY
-			    master_instance.hostname,
-			    master_instance.port
+			    main_instance.hostname,
+			    main_instance.port
 			%s
 		    ORDER BY
-			    is_master DESC ,
-			    is_cluster_master DESC,
-			    count_slaves DESC
+			    is_main DESC ,
+			    is_cluster_main DESC,
+			    count_subordinates DESC
 	`, analysisQueryReductionClause)
 	err := db.QueryOrchestrator(query, args, func(m sqlutils.RowMap) error {
 		a := ReplicationAnalysis{Analysis: NoProblem}
 
-		a.IsMaster = m.GetBool("is_master")
-		a.IsCoMaster = m.GetBool("is_co_master")
+		a.IsMain = m.GetBool("is_main")
+		a.IsCoMain = m.GetBool("is_co_main")
 		a.AnalyzedInstanceKey = InstanceKey{Hostname: m.GetString("hostname"), Port: m.GetInt("port")}
-		a.AnalyzedInstanceMasterKey = InstanceKey{Hostname: m.GetString("master_host"), Port: m.GetInt("master_port")}
+		a.AnalyzedInstanceMainKey = InstanceKey{Hostname: m.GetString("main_host"), Port: m.GetInt("main_port")}
 		a.ClusterDetails.ClusterName = m.GetString("cluster_name")
 		a.ClusterDetails.ClusterAlias = m.GetString("cluster_alias")
 		a.LastCheckValid = m.GetBool("is_last_check_valid")
-		a.CountSlaves = m.GetUint("count_slaves")
-		a.CountValidSlaves = m.GetUint("count_valid_slaves")
-		a.CountValidReplicatingSlaves = m.GetUint("count_valid_replicating_slaves")
-		a.CountSlavesFailingToConnectToMaster = m.GetUint("count_slaves_failing_to_connect_to_master")
-		a.CountStaleSlaves = m.GetUint("count_stale_slaves")
+		a.CountSubordinates = m.GetUint("count_subordinates")
+		a.CountValidSubordinates = m.GetUint("count_valid_subordinates")
+		a.CountValidReplicatingSubordinates = m.GetUint("count_valid_replicating_subordinates")
+		a.CountSubordinatesFailingToConnectToMain = m.GetUint("count_subordinates_failing_to_connect_to_main")
+		a.CountStaleSubordinates = m.GetUint("count_stale_subordinates")
 		a.ReplicationDepth = m.GetUint("replication_depth")
-		a.IsFailingToConnectToMaster = m.GetBool("is_failing_to_connect_to_master")
+		a.IsFailingToConnectToMain = m.GetBool("is_failing_to_connect_to_main")
 		a.IsDowntimed = m.GetBool("is_downtimed")
 		a.DowntimeEndTimestamp = m.GetString("downtime_end_timestamp")
 		a.DowntimeRemainingSeconds = m.GetInt("downtime_remaining_seconds")
 		a.IsBinlogServer = m.GetBool("is_binlog_server")
 		a.ClusterDetails.ReadRecoveryInfo()
 
-		a.SlaveHosts = *NewInstanceKeyMap()
-		a.SlaveHosts.ReadCommaDelimitedList(m.GetString("slave_hosts"))
+		a.SubordinateHosts = *NewInstanceKeyMap()
+		a.SubordinateHosts.ReadCommaDelimitedList(m.GetString("subordinate_hosts"))
 
-		countValidOracleGTIDSlaves := m.GetUint("count_valid_oracle_gtid_slaves")
-		a.OracleGTIDImmediateTopology = countValidOracleGTIDSlaves == a.CountValidSlaves && a.CountValidSlaves > 0
-		countValidMariaDBGTIDSlaves := m.GetUint("count_valid_mariadb_gtid_slaves")
-		a.MariaDBGTIDImmediateTopology = countValidMariaDBGTIDSlaves == a.CountValidSlaves && a.CountValidSlaves > 0
-		countValidBinlogServerSlaves := m.GetUint("count_valid_binlog_server_slaves")
-		a.BinlogServerImmediateTopology = countValidBinlogServerSlaves == a.CountValidSlaves && a.CountValidSlaves > 0
+		countValidOracleGTIDSubordinates := m.GetUint("count_valid_oracle_gtid_subordinates")
+		a.OracleGTIDImmediateTopology = countValidOracleGTIDSubordinates == a.CountValidSubordinates && a.CountValidSubordinates > 0
+		countValidMariaDBGTIDSubordinates := m.GetUint("count_valid_mariadb_gtid_subordinates")
+		a.MariaDBGTIDImmediateTopology = countValidMariaDBGTIDSubordinates == a.CountValidSubordinates && a.CountValidSubordinates > 0
+		countValidBinlogServerSubordinates := m.GetUint("count_valid_binlog_server_subordinates")
+		a.BinlogServerImmediateTopology = countValidBinlogServerSubordinates == a.CountValidSubordinates && a.CountValidSubordinates > 0
 		a.PseudoGTIDImmediateTopology = m.GetBool("is_pseudo_gtid")
 
-		a.CountStatementBasedLoggingSlaves = m.GetUint("count_statement_based_loggin_slaves")
-		a.CountMixedBasedLoggingSlaves = m.GetUint("count_mixed_based_loggin_slaves")
-		a.CountRowBasedLoggingSlaves = m.GetUint("count_row_based_loggin_slaves")
-		a.CountDistinctMajorVersionsLoggingSlaves = m.GetUint("count_distinct_logging_major_versions")
+		a.CountStatementBasedLoggingSubordinates = m.GetUint("count_statement_based_loggin_subordinates")
+		a.CountMixedBasedLoggingSubordinates = m.GetUint("count_mixed_based_loggin_subordinates")
+		a.CountRowBasedLoggingSubordinates = m.GetUint("count_row_based_loggin_subordinates")
+		a.CountDistinctMajorVersionsLoggingSubordinates = m.GetUint("count_distinct_logging_major_versions")
 
-		if a.IsMaster && !a.LastCheckValid && a.CountSlaves == 0 {
-			a.Analysis = DeadMasterWithoutSlaves
-			a.Description = "Master cannot be reached by orchestrator and has no slave"
+		if a.IsMain && !a.LastCheckValid && a.CountSubordinates == 0 {
+			a.Analysis = DeadMainWithoutSubordinates
+			a.Description = "Main cannot be reached by orchestrator and has no subordinate"
 			//
-		} else if a.IsMaster && !a.LastCheckValid && a.CountValidSlaves == a.CountSlaves && a.CountValidReplicatingSlaves == 0 {
-			a.Analysis = DeadMaster
-			a.Description = "Master cannot be reached by orchestrator and none of its slaves is replicating"
+		} else if a.IsMain && !a.LastCheckValid && a.CountValidSubordinates == a.CountSubordinates && a.CountValidReplicatingSubordinates == 0 {
+			a.Analysis = DeadMain
+			a.Description = "Main cannot be reached by orchestrator and none of its subordinates is replicating"
 			//
-		} else if a.IsMaster && !a.LastCheckValid && a.CountSlaves > 0 && a.CountValidSlaves == 0 && a.CountValidReplicatingSlaves == 0 {
-			a.Analysis = DeadMasterAndSlaves
-			a.Description = "Master cannot be reached by orchestrator and none of its slaves is replicating"
+		} else if a.IsMain && !a.LastCheckValid && a.CountSubordinates > 0 && a.CountValidSubordinates == 0 && a.CountValidReplicatingSubordinates == 0 {
+			a.Analysis = DeadMainAndSubordinates
+			a.Description = "Main cannot be reached by orchestrator and none of its subordinates is replicating"
 			//
-		} else if a.IsMaster && !a.LastCheckValid && a.CountValidSlaves < a.CountSlaves && a.CountValidSlaves > 0 && a.CountValidReplicatingSlaves == 0 {
-			a.Analysis = DeadMasterAndSomeSlaves
-			a.Description = "Master cannot be reached by orchestrator; some of its slaves are unreachable and none of its reachable slaves is replicating"
+		} else if a.IsMain && !a.LastCheckValid && a.CountValidSubordinates < a.CountSubordinates && a.CountValidSubordinates > 0 && a.CountValidReplicatingSubordinates == 0 {
+			a.Analysis = DeadMainAndSomeSubordinates
+			a.Description = "Main cannot be reached by orchestrator; some of its subordinates are unreachable and none of its reachable subordinates is replicating"
 			//
-		} else if a.IsMaster && !a.LastCheckValid && a.CountStaleSlaves == a.CountSlaves && a.CountValidReplicatingSlaves > 0 {
-			a.Analysis = UnreachableMasterWithStaleSlaves
-			a.Description = "Master cannot be reached by orchestrator and has running yet stale slaves"
+		} else if a.IsMain && !a.LastCheckValid && a.CountStaleSubordinates == a.CountSubordinates && a.CountValidReplicatingSubordinates > 0 {
+			a.Analysis = UnreachableMainWithStaleSubordinates
+			a.Description = "Main cannot be reached by orchestrator and has running yet stale subordinates"
 			//
-		} else if a.IsMaster && !a.LastCheckValid && a.CountValidSlaves > 0 && a.CountValidReplicatingSlaves > 0 {
-			a.Analysis = UnreachableMaster
-			a.Description = "Master cannot be reached by orchestrator but it has replicating slaves; possibly a network/host issue"
+		} else if a.IsMain && !a.LastCheckValid && a.CountValidSubordinates > 0 && a.CountValidReplicatingSubordinates > 0 {
+			a.Analysis = UnreachableMain
+			a.Description = "Main cannot be reached by orchestrator but it has replicating subordinates; possibly a network/host issue"
 			//
-		} else if a.IsMaster && a.LastCheckValid && a.CountSlaves == 1 && a.CountValidSlaves == a.CountSlaves && a.CountValidReplicatingSlaves == 0 {
-			a.Analysis = MasterSingleSlaveNotReplicating
-			a.Description = "Master is reachable but its single slave is not replicating"
+		} else if a.IsMain && a.LastCheckValid && a.CountSubordinates == 1 && a.CountValidSubordinates == a.CountSubordinates && a.CountValidReplicatingSubordinates == 0 {
+			a.Analysis = MainSingleSubordinateNotReplicating
+			a.Description = "Main is reachable but its single subordinate is not replicating"
 			//
-		} else if a.IsMaster && a.LastCheckValid && a.CountSlaves == 1 && a.CountValidSlaves == 0 {
-			a.Analysis = MasterSingleSlaveDead
-			a.Description = "Master is reachable but its single slave is dead"
+		} else if a.IsMain && a.LastCheckValid && a.CountSubordinates == 1 && a.CountValidSubordinates == 0 {
+			a.Analysis = MainSingleSubordinateDead
+			a.Description = "Main is reachable but its single subordinate is dead"
 			//
-		} else if a.IsMaster && a.LastCheckValid && a.CountSlaves > 1 && a.CountValidSlaves == a.CountSlaves && a.CountValidReplicatingSlaves == 0 {
-			a.Analysis = AllMasterSlavesNotReplicating
-			a.Description = "Master is reachable but none of its slaves is replicating"
+		} else if a.IsMain && a.LastCheckValid && a.CountSubordinates > 1 && a.CountValidSubordinates == a.CountSubordinates && a.CountValidReplicatingSubordinates == 0 {
+			a.Analysis = AllMainSubordinatesNotReplicating
+			a.Description = "Main is reachable but none of its subordinates is replicating"
 			//
-		} else if a.IsMaster && a.LastCheckValid && a.CountSlaves > 1 && a.CountValidSlaves < a.CountSlaves && a.CountValidSlaves > 0 && a.CountValidReplicatingSlaves == 0 {
-			a.Analysis = AllMasterSlavesNotReplicatingOrDead
-			a.Description = "Master is reachable but none of its slaves is replicating"
+		} else if a.IsMain && a.LastCheckValid && a.CountSubordinates > 1 && a.CountValidSubordinates < a.CountSubordinates && a.CountValidSubordinates > 0 && a.CountValidReplicatingSubordinates == 0 {
+			a.Analysis = AllMainSubordinatesNotReplicatingOrDead
+			a.Description = "Main is reachable but none of its subordinates is replicating"
 			//
-		} else if a.IsMaster && a.LastCheckValid && a.CountSlaves > 1 && a.CountStaleSlaves == a.CountSlaves && a.CountValidSlaves > 0 && a.CountValidReplicatingSlaves > 0 {
-			a.Analysis = AllMasterSlavesStale
-			a.Description = "Master is reachable but all of its slaves are stale, although attempting to replicate"
+		} else if a.IsMain && a.LastCheckValid && a.CountSubordinates > 1 && a.CountStaleSubordinates == a.CountSubordinates && a.CountValidSubordinates > 0 && a.CountValidReplicatingSubordinates > 0 {
+			a.Analysis = AllMainSubordinatesStale
+			a.Description = "Main is reachable but all of its subordinates are stale, although attempting to replicate"
 			//
-		} else /* co-master */ if a.IsCoMaster && !a.LastCheckValid && a.CountSlaves > 0 && a.CountValidSlaves == a.CountSlaves && a.CountValidReplicatingSlaves == 0 {
-			a.Analysis = DeadCoMaster
-			a.Description = "Co-master cannot be reached by orchestrator and none of its slaves is replicating"
+		} else /* co-main */ if a.IsCoMain && !a.LastCheckValid && a.CountSubordinates > 0 && a.CountValidSubordinates == a.CountSubordinates && a.CountValidReplicatingSubordinates == 0 {
+			a.Analysis = DeadCoMain
+			a.Description = "Co-main cannot be reached by orchestrator and none of its subordinates is replicating"
 			//
-		} else if a.IsCoMaster && !a.LastCheckValid && a.CountSlaves > 0 && a.CountValidSlaves < a.CountSlaves && a.CountValidSlaves > 0 && a.CountValidReplicatingSlaves == 0 {
-			a.Analysis = DeadCoMasterAndSomeSlaves
-			a.Description = "Co-master cannot be reached by orchestrator; some of its slaves are unreachable and none of its reachable slaves is replicating"
+		} else if a.IsCoMain && !a.LastCheckValid && a.CountSubordinates > 0 && a.CountValidSubordinates < a.CountSubordinates && a.CountValidSubordinates > 0 && a.CountValidReplicatingSubordinates == 0 {
+			a.Analysis = DeadCoMainAndSomeSubordinates
+			a.Description = "Co-main cannot be reached by orchestrator; some of its subordinates are unreachable and none of its reachable subordinates is replicating"
 			//
-		} else if a.IsCoMaster && !a.LastCheckValid && a.CountValidSlaves > 0 && a.CountValidReplicatingSlaves > 0 {
-			a.Analysis = UnreachableCoMaster
-			a.Description = "Co-master cannot be reached by orchestrator but it has replicating slaves; possibly a network/host issue"
+		} else if a.IsCoMain && !a.LastCheckValid && a.CountValidSubordinates > 0 && a.CountValidReplicatingSubordinates > 0 {
+			a.Analysis = UnreachableCoMain
+			a.Description = "Co-main cannot be reached by orchestrator but it has replicating subordinates; possibly a network/host issue"
 			//
-		} else if a.IsCoMaster && a.LastCheckValid && a.CountSlaves > 0 && a.CountValidReplicatingSlaves == 0 {
-			a.Analysis = AllCoMasterSlavesNotReplicating
-			a.Description = "Co-master is reachable but none of its slaves is replicating"
+		} else if a.IsCoMain && a.LastCheckValid && a.CountSubordinates > 0 && a.CountValidReplicatingSubordinates == 0 {
+			a.Analysis = AllCoMainSubordinatesNotReplicating
+			a.Description = "Co-main is reachable but none of its subordinates is replicating"
 			//
-		} else /* intermediate-master */ if !a.IsMaster && !a.LastCheckValid && a.CountSlaves == 1 && a.CountValidSlaves == a.CountSlaves && a.CountSlavesFailingToConnectToMaster == a.CountSlaves && a.CountValidReplicatingSlaves == 0 {
-			a.Analysis = DeadIntermediateMasterWithSingleSlaveFailingToConnect
-			a.Description = "Intermediate master cannot be reached by orchestrator and its (single) slave is failing to connect"
+		} else /* intermediate-main */ if !a.IsMain && !a.LastCheckValid && a.CountSubordinates == 1 && a.CountValidSubordinates == a.CountSubordinates && a.CountSubordinatesFailingToConnectToMain == a.CountSubordinates && a.CountValidReplicatingSubordinates == 0 {
+			a.Analysis = DeadIntermediateMainWithSingleSubordinateFailingToConnect
+			a.Description = "Intermediate main cannot be reached by orchestrator and its (single) subordinate is failing to connect"
 			//
-		} else /* intermediate-master */ if !a.IsMaster && !a.LastCheckValid && a.CountSlaves == 1 && a.CountValidSlaves == a.CountSlaves && a.CountValidReplicatingSlaves == 0 {
-			a.Analysis = DeadIntermediateMasterWithSingleSlave
-			a.Description = "Intermediate master cannot be reached by orchestrator and its (single) slave is not replicating"
+		} else /* intermediate-main */ if !a.IsMain && !a.LastCheckValid && a.CountSubordinates == 1 && a.CountValidSubordinates == a.CountSubordinates && a.CountValidReplicatingSubordinates == 0 {
+			a.Analysis = DeadIntermediateMainWithSingleSubordinate
+			a.Description = "Intermediate main cannot be reached by orchestrator and its (single) subordinate is not replicating"
 			//
-		} else /* intermediate-master */ if !a.IsMaster && !a.LastCheckValid && a.CountSlaves > 1 && a.CountValidSlaves == a.CountSlaves && a.CountValidReplicatingSlaves == 0 {
-			a.Analysis = DeadIntermediateMaster
-			a.Description = "Intermediate master cannot be reached by orchestrator and none of its slaves is replicating"
+		} else /* intermediate-main */ if !a.IsMain && !a.LastCheckValid && a.CountSubordinates > 1 && a.CountValidSubordinates == a.CountSubordinates && a.CountValidReplicatingSubordinates == 0 {
+			a.Analysis = DeadIntermediateMain
+			a.Description = "Intermediate main cannot be reached by orchestrator and none of its subordinates is replicating"
 			//
-		} else if !a.IsMaster && !a.LastCheckValid && a.CountValidSlaves < a.CountSlaves && a.CountValidSlaves > 0 && a.CountValidReplicatingSlaves == 0 {
-			a.Analysis = DeadIntermediateMasterAndSomeSlaves
-			a.Description = "Intermediate master cannot be reached by orchestrator; some of its slaves are unreachable and none of its reachable slaves is replicating"
+		} else if !a.IsMain && !a.LastCheckValid && a.CountValidSubordinates < a.CountSubordinates && a.CountValidSubordinates > 0 && a.CountValidReplicatingSubordinates == 0 {
+			a.Analysis = DeadIntermediateMainAndSomeSubordinates
+			a.Description = "Intermediate main cannot be reached by orchestrator; some of its subordinates are unreachable and none of its reachable subordinates is replicating"
 			//
-		} else if !a.IsMaster && !a.LastCheckValid && a.CountValidSlaves > 0 && a.CountValidReplicatingSlaves > 0 {
-			a.Analysis = UnreachableIntermediateMaster
-			a.Description = "Intermediate master cannot be reached by orchestrator but it has replicating slaves; possibly a network/host issue"
+		} else if !a.IsMain && !a.LastCheckValid && a.CountValidSubordinates > 0 && a.CountValidReplicatingSubordinates > 0 {
+			a.Analysis = UnreachableIntermediateMain
+			a.Description = "Intermediate main cannot be reached by orchestrator but it has replicating subordinates; possibly a network/host issue"
 			//
-		} else if !a.IsMaster && a.LastCheckValid && a.CountSlaves > 1 && a.CountValidReplicatingSlaves == 0 &&
-			a.CountSlavesFailingToConnectToMaster > 0 && a.CountSlavesFailingToConnectToMaster == a.CountValidSlaves {
-			// All slaves are either failing to connect to master (and at least one of these have to exist)
+		} else if !a.IsMain && a.LastCheckValid && a.CountSubordinates > 1 && a.CountValidReplicatingSubordinates == 0 &&
+			a.CountSubordinatesFailingToConnectToMain > 0 && a.CountSubordinatesFailingToConnectToMain == a.CountValidSubordinates {
+			// All subordinates are either failing to connect to main (and at least one of these have to exist)
 			// or completely dead.
-			// Must have at least two slaves to reach such conclusion -- do note that the intermediate master is still
-			// reachable to orchestrator, so we base our conclusion on slaves only at this point.
-			a.Analysis = AllIntermediateMasterSlavesFailingToConnectOrDead
-			a.Description = "Intermediate master is reachable but all of its slaves are failing to connect"
+			// Must have at least two subordinates to reach such conclusion -- do note that the intermediate main is still
+			// reachable to orchestrator, so we base our conclusion on subordinates only at this point.
+			a.Analysis = AllIntermediateMainSubordinatesFailingToConnectOrDead
+			a.Description = "Intermediate main is reachable but all of its subordinates are failing to connect"
 			//
-		} else if !a.IsMaster && a.LastCheckValid && a.CountSlaves > 0 && a.CountValidReplicatingSlaves == 0 {
-			a.Analysis = AllIntermediateMasterSlavesNotReplicating
-			a.Description = "Intermediate master is reachable but none of its slaves is replicating"
+		} else if !a.IsMain && a.LastCheckValid && a.CountSubordinates > 0 && a.CountValidReplicatingSubordinates == 0 {
+			a.Analysis = AllIntermediateMainSubordinatesNotReplicating
+			a.Description = "Intermediate main is reachable but none of its subordinates is replicating"
 			//
-		} else if a.IsBinlogServer && a.IsFailingToConnectToMaster {
-			a.Analysis = BinlogServerFailingToConnectToMaster
-			a.Description = "Binlog server is unable to connect to its master"
+		} else if a.IsBinlogServer && a.IsFailingToConnectToMain {
+			a.Analysis = BinlogServerFailingToConnectToMain
+			a.Description = "Binlog server is unable to connect to its main"
 			//
-		} else if a.ReplicationDepth == 1 && a.IsFailingToConnectToMaster {
-			a.Analysis = FirstTierSlaveFailingToConnectToMaster
-			a.Description = "1st tier slave (directly replicating from topology master) is unable to connect to the master"
+		} else if a.ReplicationDepth == 1 && a.IsFailingToConnectToMain {
+			a.Analysis = FirstTierSubordinateFailingToConnectToMain
+			a.Description = "1st tier subordinate (directly replicating from topology main) is unable to connect to the main"
 			//
 		}
-		//		 else if a.IsMaster && a.CountSlaves == 0 {
-		//			a.Analysis = MasterWithoutSlaves
-		//			a.Description = "Master has no slaves"
+		//		 else if a.IsMain && a.CountSubordinates == 0 {
+		//			a.Analysis = MainWithoutSubordinates
+		//			a.Description = "Main has no subordinates"
 		//		}
 
 		appendAnalysis := func(analysis *ReplicationAnalysis) {
@@ -374,22 +374,22 @@ func GetReplicationAnalysis(clusterName string, includeDowntimed bool, auditAnal
 		{
 			// Moving on to structure analysis
 			// We also do structural checks. See if there's potential danger in promotions
-			if a.IsMaster && a.CountStatementBasedLoggingSlaves > 0 && a.CountMixedBasedLoggingSlaves > 0 {
-				a.StructureAnalysis = append(a.StructureAnalysis, StatementAndMixedLoggingSlavesStructureWarning)
+			if a.IsMain && a.CountStatementBasedLoggingSubordinates > 0 && a.CountMixedBasedLoggingSubordinates > 0 {
+				a.StructureAnalysis = append(a.StructureAnalysis, StatementAndMixedLoggingSubordinatesStructureWarning)
 			}
-			if a.IsMaster && a.CountStatementBasedLoggingSlaves > 0 && a.CountRowBasedLoggingSlaves > 0 {
-				a.StructureAnalysis = append(a.StructureAnalysis, StatementAndRowLoggingSlavesStructureWarning)
+			if a.IsMain && a.CountStatementBasedLoggingSubordinates > 0 && a.CountRowBasedLoggingSubordinates > 0 {
+				a.StructureAnalysis = append(a.StructureAnalysis, StatementAndRowLoggingSubordinatesStructureWarning)
 			}
-			if a.IsMaster && a.CountMixedBasedLoggingSlaves > 0 && a.CountRowBasedLoggingSlaves > 0 {
-				a.StructureAnalysis = append(a.StructureAnalysis, MixedAndRowLoggingSlavesStructureWarning)
+			if a.IsMain && a.CountMixedBasedLoggingSubordinates > 0 && a.CountRowBasedLoggingSubordinates > 0 {
+				a.StructureAnalysis = append(a.StructureAnalysis, MixedAndRowLoggingSubordinatesStructureWarning)
 			}
-			if a.IsMaster && a.CountDistinctMajorVersionsLoggingSlaves > 1 {
-				a.StructureAnalysis = append(a.StructureAnalysis, MultipleMajorVersionsLoggingSlaves)
+			if a.IsMain && a.CountDistinctMajorVersionsLoggingSubordinates > 1 {
+				a.StructureAnalysis = append(a.StructureAnalysis, MultipleMajorVersionsLoggingSubordinates)
 			}
 		}
 		appendAnalysis(&a)
 
-		if a.CountSlaves > 0 && auditAnalysis {
+		if a.CountSubordinates > 0 && auditAnalysis {
 			// Interesting enough for analysis
 			go auditInstanceAnalysisInChangelog(&a.AnalyzedInstanceKey, a.Analysis)
 		}

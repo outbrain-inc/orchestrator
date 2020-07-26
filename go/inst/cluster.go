@@ -26,17 +26,17 @@ import (
 type ClusterInfo struct {
 	ClusterName                            string
 	ClusterAlias                           string // Human friendly alias
-	ClusterDomain                          string // CNAME/VIP/A-record/whatever of the master of this cluster
+	ClusterDomain                          string // CNAME/VIP/A-record/whatever of the main of this cluster
 	CountInstances                         uint
 	HeuristicLag                           int64
-	HasAutomatedMasterRecovery             bool
-	HasAutomatedIntermediateMasterRecovery bool
+	HasAutomatedMainRecovery             bool
+	HasAutomatedIntermediateMainRecovery bool
 }
 
 // ReadRecoveryInfo
 func (this *ClusterInfo) ReadRecoveryInfo() {
-	this.HasAutomatedMasterRecovery = this.filtersMatchCluster(config.Config.RecoverMasterClusterFilters)
-	this.HasAutomatedIntermediateMasterRecovery = this.filtersMatchCluster(config.Config.RecoverIntermediateMasterClusterFilters)
+	this.HasAutomatedMainRecovery = this.filtersMatchCluster(config.Config.RecoverMainClusterFilters)
+	this.HasAutomatedIntermediateMainRecovery = this.filtersMatchCluster(config.Config.RecoverIntermediateMainClusterFilters)
 }
 
 // filtersMatchCluster will see whether the given filters match the given cluster details

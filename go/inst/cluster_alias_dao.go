@@ -95,7 +95,7 @@ func UpdateClusterAliases() error {
 							cluster_name order by
 								((last_checked <= last_seen) is true) desc,
 								read_only asc,
-								num_slave_hosts desc
+								num_subordinate_hosts desc
 							), ',', 1) as cluster_name,
 				    NOW()
 				  from
@@ -103,7 +103,7 @@ func UpdateClusterAliases() error {
 				    left join database_instance_downtime using (hostname, port)
 				  where
 				    suggested_cluster_alias!=''
-						/* exclude newly demoted, downtimed masters */
+						/* exclude newly demoted, downtimed mains */
 						and ifnull(
 								database_instance_downtime.downtime_active = 1
 								and database_instance_downtime.end_timestamp > now()

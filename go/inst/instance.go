@@ -63,12 +63,12 @@ type Instance struct {
 	ReadOnly               bool
 	Binlog_format          string
 	LogBinEnabled          bool
-	LogSlaveUpdatesEnabled bool
+	LogSubordinateUpdatesEnabled bool
 	SelfBinlogCoordinates  BinlogCoordinates
-	MasterKey              InstanceKey
-	IsDetachedMaster       bool
-	Slave_SQL_Running      bool
-	Slave_IO_Running       bool
+	MainKey              InstanceKey
+	IsDetachedMain       bool
+	Subordinate_SQL_Running      bool
+	Subordinate_IO_Running       bool
 	HasReplicationFilters  bool
 	SupportsOracleGTID     bool
 	UsingOracleGTID        bool
@@ -80,19 +80,19 @@ type Instance struct {
 	RelaylogCoordinates    BinlogCoordinates
 	LastSQLError           string
 	LastIOError            string
-	SecondsBehindMaster    sql.NullInt64
+	SecondsBehindMain    sql.NullInt64
 	SQLDelay               uint
 	ExecutedGtidSet        string
 	GtidPurged             string
 
-	SlaveLagSeconds                 sql.NullInt64
-	SlaveHosts                      InstanceKeyMap
+	SubordinateLagSeconds                 sql.NullInt64
+	SubordinateHosts                      InstanceKeyMap
 	ClusterName                     string
 	SuggestedClusterAlias           string
 	DataCenter                      string
 	PhysicalEnvironment             string
 	ReplicationDepth                uint
-	IsCoMaster                      bool
+	IsCoMain                      bool
 	HasReplicationCredentials       bool
 	ReplicationCredentialsAvailable bool
 	SemiSyncEnforced                bool
@@ -117,7 +117,7 @@ type Instance struct {
 // NewInstance creates a new, empty instance
 func NewInstance() *Instance {
 	return &Instance{
-		SlaveHosts: make(map[InstanceKey]bool),
+		SubordinateHosts: make(map[InstanceKey]bool),
 	}
 }
 
@@ -224,14 +224,14 @@ func (instance *Instance) NameAndMajorVersionString() string {
 	return name + "-" + instance.MajorVersionString()
 }
 
-// IsSlave makes simple heuristics to decide whether this insatnce is a slave of another instance
-func (this *Instance) IsSlave() bool {
-	return this.MasterKey.Hostname != "" && this.MasterKey.Hostname != "_" && this.MasterKey.Port != 0 && (this.ReadBinlogCoordinates.LogFile != "" || this.UsingGTID())
+// IsSubordinate makes simple heuristics to decide whether this insatnce is a subordinate of another instance
+func (this *Instance) IsSubordinate() bool {
+	return this.MainKey.Hostname != "" && this.MainKey.Hostname != "_" && this.MainKey.Port != 0 && (this.ReadBinlogCoordinates.LogFile != "" || this.UsingGTID())
 }
 
-// SlaveRunning returns true when this instance's status is of a replicating slave.
-func (this *Instance) SlaveRunning() bool {
-	return this.IsSlave() && this.Slave_SQL_Running && this.Slave_IO_Running
+// SubordinateRunning returns true when this instance's status is of a replicating subordinate.
+func (this *Instance) SubordinateRunning() bool {
+	return this.IsSubordinate() && this.Subordinate_SQL_Running && this.Subordinate_IO_Running
 }
 
 // SQLThreadUpToDate returns true when the instance had consumed all relay logs.
@@ -239,7 +239,7 @@ func (this *Instance) SQLThreadUpToDate() bool {
 	return this.ReadBinlogCoordinates.Equals(&this.ExecBinlogCoordinates)
 }
 
-// UsingGTID returns true when this slave is currently replicating via GTID (either Oracle or MariaDB)
+// UsingGTID returns true when this subordinate is currently replicating via GTID (either Oracle or MariaDB)
 func (this *Instance) UsingGTID() bool {
 	return this.UsingOracleGTID || this.UsingMariaDBGTID
 }
@@ -259,9 +259,9 @@ func (this *Instance) NextGTID() (string, error) {
 		return tokens[len(tokens)-1]
 	}
 	// executed GTID set: 4f6d62ed-df65-11e3-b395-60672090eb04:1,b9b4712a-df64-11e3-b391-60672090eb04:1-6
-	executedGTIDsFromMaster := lastToken(this.ExecutedGtidSet, ",")
-	// executedGTIDsFromMaster: b9b4712a-df64-11e3-b391-60672090eb04:1-6
-	executedRange := lastToken(executedGTIDsFromMaster, ":")
+	executedGTIDsFromMain := lastToken(this.ExecutedGtidSet, ",")
+	// executedGTIDsFromMain: b9b4712a-df64-11e3-b391-60672090eb04:1-6
+	executedRange := lastToken(executedGTIDsFromMain, ":")
 	// executedRange: 1-6
 	lastExecutedNumberToken := lastToken(executedRange, "-")
 	// lastExecutedNumber: 6
@@ -270,13 +270,13 @@ func (this *Instance) NextGTID() (string, error) {
 		return "", err
 	}
 	nextNumber := lastExecutedNumber + 1
-	nextGTID := fmt.Sprintf("%s:%d", firstToken(executedGTIDsFromMaster, ":"), nextNumber)
+	nextGTID := fmt.Sprintf("%s:%d", firstToken(executedGTIDsFromMain, ":"), nextNumber)
 	return nextGTID, nil
 }
 
-// AddSlaveKey adds a slave to the list of this instance's slaves.
-func (this *Instance) AddSlaveKey(slaveKey *InstanceKey) {
-	this.SlaveHosts.AddKey(*slaveKey)
+// AddSubordinateKey adds a subordinate to the list of this instance's subordinates.
+func (this *Instance) AddSubordinateKey(subordinateKey *InstanceKey) {
+	this.SubordinateHosts.AddKey(*subordinateKey)
 }
 
 // GetNextBinaryLog returns the successive, if any, binary log file to the one given
@@ -287,14 +287,14 @@ func (this *Instance) GetNextBinaryLog(binlogCoordinates BinlogCoordinates) (Bin
 	return binlogCoordinates.NextFileCoordinates()
 }
 
-// IsSlaveOf returns true if this instance claims to replicate from given master
-func (this *Instance) IsSlaveOf(master *Instance) bool {
-	return this.MasterKey.Equals(&master.Key)
+// IsSubordinateOf returns true if this instance claims to replicate from given main
+func (this *Instance) IsSubordinateOf(main *Instance) bool {
+	return this.MainKey.Equals(&main.Key)
 }
 
-// IsSlaveOf returns true if this i supposed master of given slave
-func (this *Instance) IsMasterOf(slave *Instance) bool {
-	return slave.IsSlaveOf(this)
+// IsSubordinateOf returns true if this i supposed main of given subordinate
+func (this *Instance) IsMainOf(subordinate *Instance) bool {
+	return subordinate.IsSubordinateOf(this)
 }
 
 // CanReplicateFrom uses heursitics to decide whether this instacne can practically replicate from other instance.
@@ -306,17 +306,17 @@ func (this *Instance) CanReplicateFrom(other *Instance) (bool, error) {
 	if !other.LogBinEnabled {
 		return false, fmt.Errorf("instance does not have binary logs enabled: %+v", other.Key)
 	}
-	if other.IsSlave() {
-		if !other.LogSlaveUpdatesEnabled {
-			return false, fmt.Errorf("instance does not have log_slave_updates enabled: %+v", other.Key)
+	if other.IsSubordinate() {
+		if !other.LogSubordinateUpdatesEnabled {
+			return false, fmt.Errorf("instance does not have log_subordinate_updates enabled: %+v", other.Key)
 		}
-		// OK for a master to not have log_slave_updates
-		// Not OK for a slave, for it has to relay the logs.
+		// OK for a main to not have log_subordinate_updates
+		// Not OK for a subordinate, for it has to relay the logs.
 	}
 	if this.IsSmallerMajorVersion(other) && !this.IsBinlogServer() {
 		return false, fmt.Errorf("instance %+v has version %s, which is lower than %s on %+v ", this.Key, this.Version, other.Version, other.Key)
 	}
-	if this.LogBinEnabled && this.LogSlaveUpdatesEnabled {
+	if this.LogBinEnabled && this.LogSubordinateUpdatesEnabled {
 		if this.IsSmallerBinlogFormat(other) {
 			return false, fmt.Errorf("Cannot replicate from %+v binlog format on %+v to %+v on %+v", other.Binlog_format, other.Key, this.Binlog_format, this.Key)
 		}
@@ -332,13 +332,13 @@ func (this *Instance) CanReplicateFrom(other *Instance) (bool, error) {
 	return true, nil
 }
 
-// HasReasonableMaintenanceReplicationLag returns true when the slave lag is reasonable, and maintenance operations should have a green light to go.
+// HasReasonableMaintenanceReplicationLag returns true when the subordinate lag is reasonable, and maintenance operations should have a green light to go.
 func (this *Instance) HasReasonableMaintenanceReplicationLag() bool {
-	// Slaves with SQLDelay are a special case
+	// Subordinates with SQLDelay are a special case
 	if this.SQLDelay > 0 {
-		return math.AbsInt64(this.SecondsBehindMaster.Int64-int64(this.SQLDelay)) <= int64(config.Config.ReasonableMaintenanceReplicationLagSeconds)
+		return math.AbsInt64(this.SecondsBehindMain.Int64-int64(this.SQLDelay)) <= int64(config.Config.ReasonableMaintenanceReplicationLagSeconds)
 	}
-	return this.SecondsBehindMaster.Int64 <= int64(config.Config.ReasonableMaintenanceReplicationLagSeconds)
+	return this.SecondsBehindMain.Int64 <= int64(config.Config.ReasonableMaintenanceReplicationLagSeconds)
 }
 
 // CanMove returns true if this instance's state allows it to be repositioned. For example,
@@ -350,14 +350,14 @@ func (this *Instance) CanMove() (bool, error) {
 	if !this.IsRecentlyChecked {
 		return false, fmt.Errorf("%+v: not recently checked", this.Key)
 	}
-	if !this.Slave_SQL_Running {
+	if !this.Subordinate_SQL_Running {
 		return false, fmt.Errorf("%+v: instance is not replicating", this.Key)
 	}
-	if !this.Slave_IO_Running {
+	if !this.Subordinate_IO_Running {
 		return false, fmt.Errorf("%+v: instance is not replicating", this.Key)
 	}
-	if !this.SecondsBehindMaster.Valid {
-		return false, fmt.Errorf("%+v: cannot determine slave lag", this.Key)
+	if !this.SecondsBehindMain.Valid {
+		return false, fmt.Errorf("%+v: cannot determine subordinate lag", this.Key)
 	}
 	if !this.HasReasonableMaintenanceReplicationLag() {
 		return false, fmt.Errorf("%+v: lags too much", this.Key)
@@ -365,8 +365,8 @@ func (this *Instance) CanMove() (bool, error) {
 	return true, nil
 }
 
-// CanMoveAsCoMaster returns true if this instance's state allows it to be repositioned.
-func (this *Instance) CanMoveAsCoMaster() (bool, error) {
+// CanMoveAsCoMain returns true if this instance's state allows it to be repositioned.
+func (this *Instance) CanMoveAsCoMain() (bool, error) {
 	if !this.IsLastCheckValid {
 		return false, fmt.Errorf("%+v: last check invalid", this.Key)
 	}
@@ -395,10 +395,10 @@ func (this *Instance) StatusString() string {
 	if !this.IsRecentlyChecked {
 		return "unchecked"
 	}
-	if this.IsSlave() && !(this.Slave_SQL_Running && this.Slave_IO_Running) {
+	if this.IsSubordinate() && !(this.Subordinate_SQL_Running && this.Subordinate_IO_Running) {
 		return "nonreplicating"
 	}
-	if this.IsSlave() && !this.HasReasonableMaintenanceReplicationLag() {
+	if this.IsSubordinate() && !this.HasReasonableMaintenanceReplicationLag() {
 		return "lag"
 	}
 	return "ok"
@@ -415,16 +415,16 @@ func (this *Instance) LagStatusString() string {
 	if !this.IsRecentlyChecked {
 		return "unknown"
 	}
-	if this.IsSlave() && !(this.Slave_SQL_Running && this.Slave_IO_Running) {
+	if this.IsSubordinate() && !(this.Subordinate_SQL_Running && this.Subordinate_IO_Running) {
 		return "null"
 	}
-	if this.IsSlave() && !this.SecondsBehindMaster.Valid {
+	if this.IsSubordinate() && !this.SecondsBehindMain.Valid {
 		return "null"
 	}
-	if this.IsSlave() && this.SlaveLagSeconds.Int64 > int64(config.Config.ReasonableMaintenanceReplicationLagSeconds) {
-		return fmt.Sprintf("%+vs", this.SlaveLagSeconds.Int64)
+	if this.IsSubordinate() && this.SubordinateLagSeconds.Int64 > int64(config.Config.ReasonableMaintenanceReplicationLagSeconds) {
+		return fmt.Sprintf("%+vs", this.SubordinateLagSeconds.Int64)
 	}
-	return fmt.Sprintf("%+vs", this.SlaveLagSeconds.Int64)
+	return fmt.Sprintf("%+vs", this.SubordinateLagSeconds.Int64)
 }
 
 // HumanReadableDescription returns a simple readable string describing the status, version,
@@ -444,7 +444,7 @@ func (this *Instance) HumanReadableDescription() string {
 	} else {
 		tokens = append(tokens, "nobinlog")
 	}
-	if this.LogBinEnabled && this.LogSlaveUpdatesEnabled {
+	if this.LogBinEnabled && this.LogSubordinateUpdatesEnabled {
 		tokens = append(tokens, ">>")
 	}
 	if this.UsingGTID() {

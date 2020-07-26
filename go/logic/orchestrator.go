@@ -113,7 +113,7 @@ func handleDiscoveryRequests() {
 }
 
 // discoverInstance will attempt discovering an instance (unless it is already up to date) and will
-// list down its master and slaves (if any) for further discovery.
+// list down its main and subordinates (if any) for further discovery.
 func discoverInstance(instanceKey inst.InstanceKey) {
 	start := time.Now()
 	defer func() {
@@ -151,7 +151,7 @@ func discoverInstance(instanceKey inst.InstanceKey) {
 		return
 	}
 
-	log.Debugf("Discovered host: %+v, master: %+v, version: %+v in %.3fs", instance.Key, instance.MasterKey, instance.Version, time.Since(start).Seconds())
+	log.Debugf("Discovered host: %+v, main: %+v, version: %+v in %.3fs", instance.Key, instance.MainKey, instance.Version, time.Since(start).Seconds())
 
 	if atomic.LoadInt64(&isElectedNode) == 0 {
 		// Maybe this node was elected before, but isn't elected anymore.
@@ -159,16 +159,16 @@ func discoverInstance(instanceKey inst.InstanceKey) {
 		return
 	}
 
-	// Investigate slaves:
-	for _, slaveKey := range instance.SlaveHosts.GetInstanceKeys() {
-		slaveKey := slaveKey
-		if slaveKey.IsValid() {
-			discoveryQueue.Push(slaveKey)
+	// Investigate subordinates:
+	for _, subordinateKey := range instance.SubordinateHosts.GetInstanceKeys() {
+		subordinateKey := subordinateKey
+		if subordinateKey.IsValid() {
+			discoveryQueue.Push(subordinateKey)
 		}
 	}
-	// Investigate master:
-	if instance.MasterKey.IsValid() {
-		discoveryQueue.Push(instance.MasterKey)
+	// Investigate main:
+	if instance.MainKey.IsValid() {
+		discoveryQueue.Push(instance.MainKey)
 	}
 }
 
@@ -263,8 +263,8 @@ func ContinuousDiscovery() {
 					go inst.ForgetExpiredHostnameResolves()
 					go inst.DeleteInvalidHostnameResolves()
 					go inst.ReviewUnseenInstances()
-					go inst.InjectUnseenMasters()
-					go inst.ResolveUnknownMasterHostnameResolves()
+					go inst.InjectUnseenMains()
+					go inst.ResolveUnknownMainHostnameResolves()
 					go inst.UpdateClusterAliases()
 					go inst.ExpireMaintenance()
 					go inst.ExpireDowntime()
@@ -272,7 +272,7 @@ func ContinuousDiscovery() {
 					go inst.ExpireHostnameUnresolve()
 					go inst.ExpireClusterDomainName()
 					go inst.ExpireAudit()
-					go inst.ExpireMasterPositionEquivalence()
+					go inst.ExpireMainPositionEquivalence()
 					go inst.ExpirePoolInstances()
 					go inst.FlushNontrivialResolveCacheToDatabase()
 					go process.ExpireNodesHistory()

@@ -43,8 +43,8 @@ func AttemptFailureDetectionRegistration(analysisEntry *inst.ReplicationAnalysis
 					analysis,
 					cluster_name,
 					cluster_alias,
-					count_affected_slaves,
-					slave_hosts
+					count_affected_subordinates,
+					subordinate_hosts
 				) values (
 					?,
 					?,
@@ -60,7 +60,7 @@ func AttemptFailureDetectionRegistration(analysisEntry *inst.ReplicationAnalysis
 					?
 				)
 			`, analysisEntry.AnalyzedInstanceKey.Hostname, analysisEntry.AnalyzedInstanceKey.Port, process.ThisHostname, process.ProcessToken.Hash,
-		string(analysisEntry.Analysis), analysisEntry.ClusterDetails.ClusterName, analysisEntry.ClusterDetails.ClusterAlias, analysisEntry.CountSlaves, analysisEntry.SlaveHosts.ToCommaDelimitedList(),
+		string(analysisEntry.Analysis), analysisEntry.ClusterDetails.ClusterName, analysisEntry.ClusterDetails.ClusterAlias, analysisEntry.CountSubordinates, analysisEntry.SubordinateHosts.ToCommaDelimitedList(),
 	)
 	if err != nil {
 		return false, log.Errore(err)
@@ -146,8 +146,8 @@ func AttemptRecoveryRegistration(analysisEntry *inst.ReplicationAnalysis, failIf
 					analysis,
 					cluster_name,
 					cluster_alias,
-					count_affected_slaves,
-					slave_hosts,
+					count_affected_subordinates,
+					subordinate_hosts,
 					last_detection_id
 				) values (
 					?,
@@ -165,7 +165,7 @@ func AttemptRecoveryRegistration(analysisEntry *inst.ReplicationAnalysis, failIf
 					(select ifnull(max(detection_id), 0) from topology_failure_detection where hostname=? and port=?)
 				)
 			`, analysisEntry.AnalyzedInstanceKey.Hostname, analysisEntry.AnalyzedInstanceKey.Port, process.ThisHostname, process.ProcessToken.Hash,
-		string(analysisEntry.Analysis), analysisEntry.ClusterDetails.ClusterName, analysisEntry.ClusterDetails.ClusterAlias, analysisEntry.CountSlaves, analysisEntry.SlaveHosts.ToCommaDelimitedList(),
+		string(analysisEntry.Analysis), analysisEntry.ClusterDetails.ClusterName, analysisEntry.ClusterDetails.ClusterAlias, analysisEntry.CountSubordinates, analysisEntry.SubordinateHosts.ToCommaDelimitedList(),
 		analysisEntry.AnalyzedInstanceKey.Hostname, analysisEntry.AnalyzedInstanceKey.Port,
 	)
 	if err != nil {
@@ -374,7 +374,7 @@ func ResolveRecovery(topologyRecovery *TopologyRecovery, successorInstance *inst
 				successor_hostname = ?,
 				successor_port = ?,
 				successor_alias = ?,
-				lost_slaves = ?,
+				lost_subordinates = ?,
 				participating_instances = ?,
 				all_errors = ?,
 				end_recovery = NOW()
@@ -384,7 +384,7 @@ func ResolveRecovery(topologyRecovery *TopologyRecovery, successorInstance *inst
 				AND processing_node_hostname = ?
 				AND processcing_node_token = ?
 			`, isSuccessful, successorKeyToWrite.Hostname, successorKeyToWrite.Port,
-		successorAliasToWrite, topologyRecovery.LostSlaves.ToCommaDelimitedList(),
+		successorAliasToWrite, topologyRecovery.LostSubordinates.ToCommaDelimitedList(),
 		topologyRecovery.ParticipatingInstanceKeys.ToCommaDelimitedList(),
 		strings.Join(topologyRecovery.AllErrors, "\n"),
 		topologyRecovery.Id, process.ThisHostname, process.ProcessToken.Hash,
@@ -413,10 +413,10 @@ func readRecoveries(whereCondition string, limit string, args []interface{}) ([]
             analysis,
             cluster_name,
             cluster_alias,
-            count_affected_slaves,
-            slave_hosts,
+            count_affected_subordinates,
+            subordinate_hosts,
             participating_instances,
-            lost_slaves,
+            lost_subordinates,
             all_errors,
             acknowledged,
             acknowledged_at,
@@ -446,8 +446,8 @@ func readRecoveries(whereCondition string, limit string, args []interface{}) ([]
 		topologyRecovery.AnalysisEntry.Analysis = inst.AnalysisCode(m.GetString("analysis"))
 		topologyRecovery.AnalysisEntry.ClusterDetails.ClusterName = m.GetString("cluster_name")
 		topologyRecovery.AnalysisEntry.ClusterDetails.ClusterAlias = m.GetString("cluster_alias")
-		topologyRecovery.AnalysisEntry.CountSlaves = m.GetUint("count_affected_slaves")
-		topologyRecovery.AnalysisEntry.ReadSlaveHostsFromString(m.GetString("slave_hosts"))
+		topologyRecovery.AnalysisEntry.CountSubordinates = m.GetUint("count_affected_subordinates")
+		topologyRecovery.AnalysisEntry.ReadSubordinateHostsFromString(m.GetString("subordinate_hosts"))
 
 		topologyRecovery.SuccessorKey = &inst.InstanceKey{}
 		topologyRecovery.SuccessorKey.Hostname = m.GetString("successor_hostname")
@@ -457,7 +457,7 @@ func readRecoveries(whereCondition string, limit string, args []interface{}) ([]
 		topologyRecovery.AnalysisEntry.ClusterDetails.ReadRecoveryInfo()
 
 		topologyRecovery.AllErrors = strings.Split(m.GetString("all_errors"), "\n")
-		topologyRecovery.LostSlaves.ReadCommaDelimitedList(m.GetString("lost_slaves"))
+		topologyRecovery.LostSubordinates.ReadCommaDelimitedList(m.GetString("lost_subordinates"))
 		topologyRecovery.ParticipatingInstanceKeys.ReadCommaDelimitedList(m.GetString("participating_instances"))
 
 		topologyRecovery.Acknowledged = m.GetBool("acknowledged")
@@ -588,8 +588,8 @@ func readFailureDetections(whereCondition string, limit string, args []interface
             analysis,
             cluster_name,
             cluster_alias,
-            count_affected_slaves,
-            slave_hosts,
+            count_affected_subordinates,
+            subordinate_hosts,
             (select max(recovery_id) from topology_recovery where topology_recovery.last_detection_id = detection_id) as related_recovery_id
 		from
 			topology_failure_detection
@@ -612,8 +612,8 @@ func readFailureDetections(whereCondition string, limit string, args []interface
 		failureDetection.AnalysisEntry.Analysis = inst.AnalysisCode(m.GetString("analysis"))
 		failureDetection.AnalysisEntry.ClusterDetails.ClusterName = m.GetString("cluster_name")
 		failureDetection.AnalysisEntry.ClusterDetails.ClusterAlias = m.GetString("cluster_alias")
-		failureDetection.AnalysisEntry.CountSlaves = m.GetUint("count_affected_slaves")
-		failureDetection.AnalysisEntry.ReadSlaveHostsFromString(m.GetString("slave_hosts"))
+		failureDetection.AnalysisEntry.CountSubordinates = m.GetUint("count_affected_subordinates")
+		failureDetection.AnalysisEntry.ReadSubordinateHostsFromString(m.GetString("subordinate_hosts"))
 
 		failureDetection.RelatedRecoveryId = m.GetInt64("related_recovery_id")
 
