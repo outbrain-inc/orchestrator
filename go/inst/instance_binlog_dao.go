@@ -303,10 +303,10 @@ func SearchEntryInInstanceBinlogs(instance *Instance, entryText string, monotoni
 	for {
 		log.Debugf("Searching for given pseudo gtid entry in binlog %+v of %+v", currentBinlog.LogFile, instance.Key)
 		// loop iteration per binary log. This might turn to be a heavyweight operation. We wish to throttle the operation such that
-		// the instance does not suffer. If it is a slave, we will only act as long as it's not lagging too much.
-		if instance.SlaveRunning() {
+		// the instance does not suffer. If it is a subordinate, we will only act as long as it's not lagging too much.
+		if instance.SubordinateRunning() {
 			for {
-				log.Debugf("%+v is a replicating slave. Verifying lag", instance.Key)
+				log.Debugf("%+v is a replicating subordinate. Verifying lag", instance.Key)
 				instance, err = ReadTopologyInstanceUnbuffered(&instance.Key)
 				if err != nil {
 					break
@@ -332,7 +332,7 @@ func SearchEntryInInstanceBinlogs(instance *Instance, entryText string, monotoni
 		}
 		// Got here? Unfound. Keep looking
 		if minBinlogCoordinates != nil && minBinlogCoordinates.LogFile == currentBinlog.LogFile {
-			log.Debugf("Heuristic master binary logs search failed; continuing exhaustive search")
+			log.Debugf("Heuristic main binary logs search failed; continuing exhaustive search")
 			minBinlogCoordinates = nil
 		} else {
 			currentBinlog, err = currentBinlog.PreviousFileCoordinates()
@@ -411,13 +411,13 @@ func getNextBinlogEventsChunk(instance *Instance, startingCoordinates BinlogCoor
 	return events, err
 }
 
-// GetNextBinlogCoordinatesToMatch is given a twin-coordinates couple for a would-be slave (instanceKey) and another
+// GetNextBinlogCoordinatesToMatch is given a twin-coordinates couple for a would-be subordinate (instanceKey) and another
 // instance (otherKey).
 // This is part of the match-below process, and is the heart of the operation: matching the binlog events starting
 // the twin-coordinates (where both share the same Pseudo-GTID) until "instance" runs out of entries, hopefully
 // before "other" runs out.
 // If "other" runs out that means "instance" is more advanced in replication than "other", in which case we can't
-// turn it into a slave of "other".
+// turn it into a subordinate of "other".
 // Otherwise "instance" will point to the *next* binlog entry in "other"
 func GetNextBinlogCoordinatesToMatch(instance *Instance, instanceCoordinates BinlogCoordinates, recordedInstanceRelayLogCoordinates BinlogCoordinates, maxBinlogCoordinates *BinlogCoordinates,
 	other *Instance, otherCoordinates BinlogCoordinates) (*BinlogCoordinates, int, error) {
@@ -477,7 +477,7 @@ func GetNextBinlogCoordinatesToMatch(instance *Instance, instanceCoordinates Bin
 			case RelayLog:
 				// Argghhhh! SHOW RELAY LOG EVENTS IN '...' statement returns CRAPPY values for End_log_pos:
 				// instead of returning the end log pos of the current statement in the *relay log*, it shows
-				// the end log pos of the matching statement in the *master's binary log*!
+				// the end log pos of the matching statement in the *main's binary log*!
 				// Yes, there's logic to this. But this means the next-ccordinates are meaningless.
 				// As result, in the case where we exhaust (following) the relay log, we cannot do our last
 				// nice sanity test that we've indeed reached the Relay_log_pos coordinate; we are only at the
@@ -492,7 +492,7 @@ func GetNextBinlogCoordinatesToMatch(instance *Instance, instanceCoordinates Bin
 				} else if recordedInstanceRelayLogCoordinates.Equals(&event.Coordinates) {
 					// We've passed the maxScanInstanceCoordinates (applies for relay logs)
 					endOfScan = true
-					log.Debugf("Reached slave relay log coordinates at %+v", recordedInstanceRelayLogCoordinates)
+					log.Debugf("Reached subordinate relay log coordinates at %+v", recordedInstanceRelayLogCoordinates)
 				} else if recordedInstanceRelayLogCoordinates.SmallerThan(&event.Coordinates) {
 					return nil, 0, log.Errorf("Unexpected problem: relay log scan passed relay log position without hitting it. Ended with: %+v, relay log position: %+v", event.Coordinates, recordedInstanceRelayLogCoordinates)
 				}
@@ -518,7 +518,7 @@ func GetNextBinlogCoordinatesToMatch(instance *Instance, instanceCoordinates Bin
 			log.Debugf("> %+v %+v; %+v", rpad(coordinatesStr, beautifyCoordinatesLength), event.EventType, strings.Split(strings.TrimSpace(instanceEventInfo), "\n")[0])
 		}
 		{
-			// Extract next binlog/relaylog entry from otherInstance (intended master):
+			// Extract next binlog/relaylog entry from otherInstance (intended main):
 			event, err := otherCursor.nextRealEvent(0)
 			if err != nil {
 				return nil, 0, log.Errore(err)
@@ -526,7 +526,7 @@ func GetNextBinlogCoordinatesToMatch(instance *Instance, instanceCoordinates Bin
 			if event == nil {
 				// end of binary logs for otherInstance: this is unexpected and means instance is more advanced
 				// than otherInstance
-				return nil, 0, log.Errorf("Unexpected end of binary logs for assumed master (%+v). This means the instance which attempted to be a slave (%+v) was more advanced. Try the other way round", other.Key, instance.Key)
+				return nil, 0, log.Errorf("Unexpected end of binary logs for assumed main (%+v). This means the instance which attempted to be a subordinate (%+v) was more advanced. Try the other way round", other.Key, instance.Key)
 			}
 			otherEventInfo = event.Info
 			otherEventCoordinates = event.Coordinates

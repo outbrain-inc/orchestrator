@@ -55,21 +55,21 @@ var generateSQLBase = []string{
           version varchar(128) CHARACTER SET ascii NOT NULL,
           binlog_format varchar(16) CHARACTER SET ascii NOT NULL,
           log_bin tinyint(3) unsigned NOT NULL,
-          log_slave_updates tinyint(3) unsigned NOT NULL,
+          log_subordinate_updates tinyint(3) unsigned NOT NULL,
           binary_log_file varchar(128) CHARACTER SET ascii NOT NULL,
           binary_log_pos bigint(20) unsigned NOT NULL,
-          master_host varchar(128) CHARACTER SET ascii NOT NULL,
-          master_port smallint(5) unsigned NOT NULL,
-          slave_sql_running tinyint(3) unsigned NOT NULL,
-          slave_io_running tinyint(3) unsigned NOT NULL,
-          master_log_file varchar(128) CHARACTER SET ascii NOT NULL,
-          read_master_log_pos bigint(20) unsigned NOT NULL,
-          relay_master_log_file varchar(128) CHARACTER SET ascii NOT NULL,
-          exec_master_log_pos bigint(20) unsigned NOT NULL,
-          seconds_behind_master bigint(20) unsigned DEFAULT NULL,
-          slave_lag_seconds bigint(20) unsigned DEFAULT NULL,
-          num_slave_hosts int(10) unsigned NOT NULL,
-          slave_hosts text CHARACTER SET ascii NOT NULL,
+          main_host varchar(128) CHARACTER SET ascii NOT NULL,
+          main_port smallint(5) unsigned NOT NULL,
+          subordinate_sql_running tinyint(3) unsigned NOT NULL,
+          subordinate_io_running tinyint(3) unsigned NOT NULL,
+          main_log_file varchar(128) CHARACTER SET ascii NOT NULL,
+          read_main_log_pos bigint(20) unsigned NOT NULL,
+          relay_main_log_file varchar(128) CHARACTER SET ascii NOT NULL,
+          exec_main_log_pos bigint(20) unsigned NOT NULL,
+          seconds_behind_main bigint(20) unsigned DEFAULT NULL,
+          subordinate_lag_seconds bigint(20) unsigned DEFAULT NULL,
+          num_subordinate_hosts int(10) unsigned NOT NULL,
+          subordinate_hosts text CHARACTER SET ascii NOT NULL,
           cluster_name tinytext CHARACTER SET ascii NOT NULL,
           PRIMARY KEY (hostname,port),
           KEY cluster_name_idx (cluster_name(128)),
@@ -268,8 +268,8 @@ var generateSQLBase = []string{
           snapshot_unix_timestamp INT UNSIGNED NOT NULL,
           hostname varchar(128) CHARACTER SET ascii NOT NULL,
           port smallint(5) unsigned NOT NULL,
-          master_host varchar(128) CHARACTER SET ascii NOT NULL,
-          master_port smallint(5) unsigned NOT NULL,
+          main_host varchar(128) CHARACTER SET ascii NOT NULL,
+          main_port smallint(5) unsigned NOT NULL,
           cluster_name tinytext CHARACTER SET ascii NOT NULL,
           PRIMARY KEY (snapshot_unix_timestamp, hostname, port),
           KEY cluster_name_idx (snapshot_unix_timestamp, cluster_name(128))
@@ -311,8 +311,8 @@ var generateSQLBase = []string{
           analysis varchar(128) NOT NULL,
           cluster_name varchar(128) NOT NULL,
           cluster_alias varchar(128) NOT NULL,
-          count_affected_slaves int unsigned NOT NULL,
-          slave_hosts text NOT NULL,
+          count_affected_subordinates int unsigned NOT NULL,
+          subordinate_hosts text NOT NULL,
           PRIMARY KEY (detection_id),
           UNIQUE KEY hostname_port_active_period_uidx (hostname, port, in_active_period, end_active_period_unixtime),
           KEY in_active_start_period_idx (in_active_period, start_active_period)
@@ -347,20 +347,20 @@ var generateSQLBase = []string{
 		) ENGINE=InnoDB DEFAULT CHARSET=ascii
 	`,
 	`
-        CREATE TABLE IF NOT EXISTS master_position_equivalence (
+        CREATE TABLE IF NOT EXISTS main_position_equivalence (
           equivalence_id bigint unsigned not null auto_increment,
-          master1_hostname varchar(128) CHARACTER SET ascii NOT NULL,
-          master1_port smallint(5) unsigned NOT NULL,
-          master1_binary_log_file varchar(128) CHARACTER SET ascii NOT NULL,
-          master1_binary_log_pos bigint(20) unsigned NOT NULL,
-          master2_hostname varchar(128) CHARACTER SET ascii NOT NULL,
-          master2_port smallint(5) unsigned NOT NULL,
-          master2_binary_log_file varchar(128) CHARACTER SET ascii NOT NULL,
-          master2_binary_log_pos bigint(20) unsigned NOT NULL,
+          main1_hostname varchar(128) CHARACTER SET ascii NOT NULL,
+          main1_port smallint(5) unsigned NOT NULL,
+          main1_binary_log_file varchar(128) CHARACTER SET ascii NOT NULL,
+          main1_binary_log_pos bigint(20) unsigned NOT NULL,
+          main2_hostname varchar(128) CHARACTER SET ascii NOT NULL,
+          main2_port smallint(5) unsigned NOT NULL,
+          main2_binary_log_file varchar(128) CHARACTER SET ascii NOT NULL,
+          main2_binary_log_pos bigint(20) unsigned NOT NULL,
           last_suggested TIMESTAMP NOT NULL,
           PRIMARY KEY (equivalence_id),
-          UNIQUE KEY equivalence_uidx (master1_hostname, master1_port, master1_binary_log_file, master1_binary_log_pos, master2_hostname, master2_port),
-          KEY master2_idx (master2_hostname, master2_port, master2_binary_log_file, master2_binary_log_pos),
+          UNIQUE KEY equivalence_uidx (main1_hostname, main1_port, main1_binary_log_file, main1_binary_log_pos, main2_hostname, main2_port),
+          KEY main2_idx (main2_hostname, main2_port, main2_binary_log_file, main2_binary_log_pos),
           KEY last_suggested_idx(last_suggested)
         ) ENGINE=InnoDB DEFAULT CHARSET=ascii
 	`,
@@ -517,7 +517,7 @@ var generateSQLPatches = []string{
 	`
 		ALTER TABLE
 			database_instance
-			ADD COLUMN last_sql_error TEXT NOT NULL AFTER exec_master_log_pos
+			ADD COLUMN last_sql_error TEXT NOT NULL AFTER exec_main_log_pos
 	`,
 	`
 		ALTER TABLE
@@ -532,7 +532,7 @@ var generateSQLPatches = []string{
 	`
 		ALTER TABLE
 			database_instance
-			ADD COLUMN oracle_gtid TINYINT UNSIGNED NOT NULL AFTER slave_io_running
+			ADD COLUMN oracle_gtid TINYINT UNSIGNED NOT NULL AFTER subordinate_io_running
 	`,
 	`
 		ALTER TABLE
@@ -542,7 +542,7 @@ var generateSQLPatches = []string{
 	`
 		ALTER TABLE
 			database_instance
-			ADD COLUMN relay_log_file varchar(128) CHARACTER SET ascii NOT NULL AFTER exec_master_log_pos
+			ADD COLUMN relay_log_file varchar(128) CHARACTER SET ascii NOT NULL AFTER exec_main_log_pos
 	`,
 	`
 		ALTER TABLE
@@ -552,7 +552,7 @@ var generateSQLPatches = []string{
 	`
 		ALTER TABLE
 			database_instance
-			ADD INDEX master_host_port_idx (master_host, master_port)
+			ADD INDEX main_host_port_idx (main_host, main_port)
 	`,
 	`
 		ALTER TABLE
@@ -567,7 +567,7 @@ var generateSQLPatches = []string{
 	`
 		ALTER TABLE
 			database_instance
-			ADD COLUMN has_replication_filters TINYINT UNSIGNED NOT NULL AFTER slave_io_running
+			ADD COLUMN has_replication_filters TINYINT UNSIGNED NOT NULL AFTER subordinate_io_running
 	`,
 	`
 		ALTER TABLE
@@ -597,7 +597,7 @@ var generateSQLPatches = []string{
 	`
 		ALTER TABLE
 			database_instance
-			ADD COLUMN is_co_master TINYINT UNSIGNED NOT NULL AFTER replication_depth
+			ADD COLUMN is_co_main TINYINT UNSIGNED NOT NULL AFTER replication_depth
 	`,
 	`
 		ALTER TABLE
@@ -607,7 +607,7 @@ var generateSQLPatches = []string{
 	`
 		ALTER TABLE
 			database_instance
-			ADD COLUMN sql_delay INT UNSIGNED NOT NULL AFTER slave_lag_seconds
+			ADD COLUMN sql_delay INT UNSIGNED NOT NULL AFTER subordinate_lag_seconds
 	`,
 	`
 		ALTER TABLE
@@ -615,8 +615,8 @@ var generateSQLPatches = []string{
 			ADD COLUMN analysis              varchar(128) CHARACTER SET ascii NOT NULL,
 			ADD COLUMN cluster_name          varchar(128) CHARACTER SET ascii NOT NULL,
 			ADD COLUMN cluster_alias         varchar(128) CHARACTER SET ascii NOT NULL,
-			ADD COLUMN count_affected_slaves int unsigned NOT NULL,
-			ADD COLUMN slave_hosts text CHARACTER SET ascii NOT NULL
+			ADD COLUMN count_affected_subordinates int unsigned NOT NULL,
+			ADD COLUMN subordinate_hosts text CHARACTER SET ascii NOT NULL
 	`,
 	`
 		ALTER TABLE hostname_unresolve
@@ -681,9 +681,9 @@ var generateSQLPatches = []string{
 	`
 		ALTER TABLE
 			topology_recovery
-			ADD COLUMN participating_instances text CHARACTER SET ascii NOT NULL after slave_hosts,
-			ADD COLUMN lost_slaves text CHARACTER SET ascii NOT NULL after participating_instances,
-			ADD COLUMN all_errors text CHARACTER SET ascii NOT NULL after lost_slaves
+			ADD COLUMN participating_instances text CHARACTER SET ascii NOT NULL after subordinate_hosts,
+			ADD COLUMN lost_subordinates text CHARACTER SET ascii NOT NULL after participating_instances,
+			ADD COLUMN all_errors text CHARACTER SET ascii NOT NULL after lost_subordinates
 	`,
 	`
 		ALTER TABLE audit
@@ -735,7 +735,7 @@ var generateSQLPatches = []string{
 			MODIFY last_suggested timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
 	`,
 	`
-		ALTER TABLE master_position_equivalence
+		ALTER TABLE main_position_equivalence
 			MODIFY last_suggested timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
 	`,
 	`

@@ -68,9 +68,9 @@ type Configuration struct {
 	MySQLTopologyReadTimeoutSeconds              int      // Number of seconds before topology mysql read operation is aborted (driver-side). Used for all but discovery queries.
 	MySQLInterpolateParams                       bool     // Do not use sql prepare statement if true
 	DefaultInstancePort                          int      // In case port was not specified on command line
-	SlaveLagQuery                                string   // custom query to check on slave lg (e.g. heartbeat table)
-	SlaveStartPostWaitMilliseconds               int      // Time to wait after START SLAVE before re-readong instance (give slave chance to connect to master)
-	DiscoverByShowSlaveHosts                     bool     // Attempt SHOW SLAVE HOSTS before PROCESSLIST
+	SubordinateLagQuery                                string   // custom query to check on subordinate lg (e.g. heartbeat table)
+	SubordinateStartPostWaitMilliseconds               int      // Time to wait after START SLAVE before re-readong instance (give subordinate chance to connect to main)
+	DiscoverByShowSubordinateHosts                     bool     // Attempt SHOW SLAVE HOSTS before PROCESSLIST
 	InstancePollSeconds                          uint     // Number of seconds between instance reads
 	BufferInstanceWrites                         bool     // Discovery process saves instances in bulk updates. This optimises backend DB load.
 	InstanceWriteBufferSize                      int      // Instance write buffer size (max number of instances to flush in one INSERT ODKU)
@@ -96,7 +96,7 @@ type Configuration struct {
 	ReasonableMaintenanceReplicationLagSeconds   int      // Above this value move-up and move-below are blocked
 	MaintenanceExpireMinutes                     uint     // Minutes after which a maintenance flag is considered stale and is cleared
 	MaintenancePurgeDays                         uint     // Days after which maintenance entries are purged from the database
-	CandidateInstanceExpireMinutes               uint     // Minutes after which a suggestion to use an instance as a candidate slave (to be preferably promoted on master failover) is expired.
+	CandidateInstanceExpireMinutes               uint     // Minutes after which a suggestion to use an instance as a candidate subordinate (to be preferably promoted on main failover) is expired.
 	AuditLogFile                                 string   // Name of log file for audit operations. Disabled when empty.
 	AuditToSyslog                                bool     // If true, audit messages are written to syslog
 	AuditPageSize                                int
@@ -114,18 +114,18 @@ type Configuration struct {
 	AccessTokenUseExpirySeconds                  uint              // Time by which an issued token must be used
 	AccessTokenExpiryMinutes                     uint              // Time after which HTTP access token expires
 	ClusterNameToAlias                           map[string]string // map between regex matching cluster name to a human friendly alias
-	DetectClusterAliasQuery                      string            // Optional query (executed on topology instance) that returns the alias of a cluster. Query will only be executed on cluster master (though until the topology's master is resovled it may execute on other/all slaves). If provided, must return one row, one column
-	DetectClusterDomainQuery                     string            // Optional query (executed on topology instance) that returns the VIP/CNAME/Alias/whatever domain name for the master of this cluster. Query will only be executed on cluster master (though until the topology's master is resovled it may execute on other/all slaves). If provided, must return one row, one column
+	DetectClusterAliasQuery                      string            // Optional query (executed on topology instance) that returns the alias of a cluster. Query will only be executed on cluster main (though until the topology's main is resovled it may execute on other/all subordinates). If provided, must return one row, one column
+	DetectClusterDomainQuery                     string            // Optional query (executed on topology instance) that returns the VIP/CNAME/Alias/whatever domain name for the main of this cluster. Query will only be executed on cluster main (though until the topology's main is resovled it may execute on other/all subordinates). If provided, must return one row, one column
 	DetectInstanceAliasQuery                     string            // Optional query (executed on topology instance) that returns the alias of an instance. If provided, must return one row, one column
 	DetectPromotionRuleQuery                     string            // Optional query (executed on topology instance) that returns the promotion rule of an instance. If provided, must return one row, one column.
 	DataCenterPattern                            string            // Regexp pattern with one group, extracting the datacenter name from the hostname
 	PhysicalEnvironmentPattern                   string            // Regexp pattern with one group, extracting physical environment info from hostname (e.g. combination of datacenter & prod/dev env)
 	DetectDataCenterQuery                        string            // Optional query (executed on topology instance) that returns the data center of an instance. If provided, must return one row, one column. Overrides DataCenterPattern and useful for installments where DC cannot be inferred by hostname
 	DetectPhysicalEnvironmentQuery               string            // Optional query (executed on topology instance) that returns the physical environment of an instance. If provided, must return one row, one column. Overrides PhysicalEnvironmentPattern and useful for installments where env cannot be inferred by hostname
-	DetectSemiSyncEnforcedQuery                  string            // Optional query (executed on topology instance) to determine whether semi-sync is fully enforced for master writes (async fallback is not allowed under any circumstance). If provided, must return one row, one column, value 0 or 1.
+	DetectSemiSyncEnforcedQuery                  string            // Optional query (executed on topology instance) to determine whether semi-sync is fully enforced for main writes (async fallback is not allowed under any circumstance). If provided, must return one row, one column, value 0 or 1.
 	SupportFuzzyPoolHostnames                    bool              // Should "submit-pool-instances" command be able to pass list of fuzzy instances (fuzzy means non-fqdn, but unique enough to recognize). Defaults 'true', implies more queries on backend db
 	InstancePoolExpiryMinutes                    uint              // Time after which entries in database_instance_pool are expired (resubmit via `submit-pool-instances`)
-	PromotionIgnoreHostnameFilters               []string          // Orchestrator will not promote slaves with hostname matching pattern (via -c recovery; for example, avoid promoting dev-dedicated machines)
+	PromotionIgnoreHostnameFilters               []string          // Orchestrator will not promote subordinates with hostname matching pattern (via -c recovery; for example, avoid promoting dev-dedicated machines)
 	ServeAgentsHttp                              bool              // Spawn another HTTP interface dedicated for orchestrator-agent
 	AgentsUseSSL                                 bool              // When "true" orchestrator will listen on agents port with SSL as well as connect to agents via SSL
 	AgentsUseMutualTLS                           bool              // When "true" Use mutual TLS for the server to agent communication
@@ -164,23 +164,23 @@ type Configuration struct {
 	RecoveryPeriodBlockMinutes                   int               // (supported for backwards compatibility but please use newer `RecoveryPeriodBlockSeconds` instead) The time for which an instance's recovery is kept "active", so as to avoid concurrent recoveries on smae instance as well as flapping
 	RecoveryPeriodBlockSeconds                   int               // (overrides `RecoveryPeriodBlockMinutes`) The time for which an instance's recovery is kept "active", so as to avoid concurrent recoveries on smae instance as well as flapping
 	RecoveryIgnoreHostnameFilters                []string          // Recovery analysis will completely ignore hosts matching given patterns
-	RecoverMasterClusterFilters                  []string          // Only do master recovery on clusters matching these regexp patterns (of course the ".*" pattern matches everything)
-	RecoverIntermediateMasterClusterFilters      []string          // Only do IM recovery on clusters matching these regexp patterns (of course the ".*" pattern matches everything)
+	RecoverMainClusterFilters                  []string          // Only do main recovery on clusters matching these regexp patterns (of course the ".*" pattern matches everything)
+	RecoverIntermediateMainClusterFilters      []string          // Only do IM recovery on clusters matching these regexp patterns (of course the ".*" pattern matches everything)
 	ProcessesShellCommand                        string            // Shell that executes command scripts
-	OnFailureDetectionProcesses                  []string          // Processes to execute when detecting a failover scenario (before making a decision whether to failover or not). May and should use some of these placeholders: {failureType}, {failureDescription}, {failedHost}, {failureCluster}, {failureClusterAlias}, {failureClusterDomain}, {failedPort}, {successorHost}, {successorPort}, {successorAlias}, {countSlaves}, {slaveHosts}, {isDowntimed}, {autoMasterRecovery}, {autoIntermediateMasterRecovery}
-	PreFailoverProcesses                         []string          // Processes to execute before doing a failover (aborting operation should any once of them exits with non-zero code; order of execution undefined). May and should use some of these placeholders: {failureType}, {failureDescription}, {failedHost}, {failureCluster}, {failureClusterAlias}, {failureClusterDomain}, {failedPort}, {successorHost}, {successorPort}, {successorAlias}, {countSlaves}, {slaveHosts}, {isDowntimed}
-	PostFailoverProcesses                        []string          // Processes to execute after doing a failover (order of execution undefined). May and should use some of these placeholders: {failureType}, {failureDescription}, {failedHost}, {failureCluster}, {failureClusterAlias}, {failureClusterDomain}, {failedPort}, {successorHost}, {successorPort}, {successorAlias}, {countSlaves}, {slaveHosts}, {isDowntimed}, {isSuccessful}, {lostSlaves}
-	PostUnsuccessfulFailoverProcesses            []string          // Processes to execute after a not-completely-successful failover (order of execution undefined). May and should use some of these placeholders: {failureType}, {failureDescription}, {failedHost}, {failureCluster}, {failureClusterAlias}, {failureClusterDomain}, {failedPort}, {successorHost}, {successorPort}, {successorAlias}, {countSlaves}, {slaveHosts}, {isDowntimed}, {isSuccessful}, {lostSlaves}
-	PostMasterFailoverProcesses                  []string          // Processes to execute after doing a master failover (order of execution undefined). Uses same placeholders as PostFailoverProcesses
-	PostIntermediateMasterFailoverProcesses      []string          // Processes to execute after doing a master failover (order of execution undefined). Uses same placeholders as PostFailoverProcesses
-	UnreachableMasterWithStaleSlavesProcesses    []string          // Processes to execute when detecting an UnreachableMasterWithStaleSlaves scenario.
-	CoMasterRecoveryMustPromoteOtherCoMaster     bool              // When 'false', anything can get promoted (and candidates are prefered over others). When 'true', orchestrator will promote the other co-master or else fail
-	DetachLostSlavesAfterMasterFailover          bool              // Should slaves that are not to be lost in master recovery (i.e. were more up-to-date than promoted slave) be forcibly detached
-	ApplyMySQLPromotionAfterMasterFailover       bool              // Should orchestrator take upon itself to apply MySQL master promotion: set read_only=0, detach replication, etc.
-	MasterFailoverLostInstancesDowntimeMinutes   uint              // Number of minutes to downtime any server that was lost after a master failover (including failed master & lost slaves). 0 to disable
-	MasterFailoverDetachSlaveMasterHost          bool              // Should orchestrator issue a detach-slave-master-host on newly promoted master (this makes sure the new master will not attempt to replicate old master if that comes back to life). Defaults 'false'. Meaningless if ApplyMySQLPromotionAfterMasterFailover is 'true'.
-	PostponeSlaveRecoveryOnLagMinutes            uint              // On crash recovery, slaves that are lagging more than given minutes are only resurrected late in the recovery process, after master/IM has been elected and processes executed. Value of 0 disables this feature
-	OSCIgnoreHostnameFilters                     []string          // OSC slaves recommendation will ignore slave hostnames matching given patterns
+	OnFailureDetectionProcesses                  []string          // Processes to execute when detecting a failover scenario (before making a decision whether to failover or not). May and should use some of these placeholders: {failureType}, {failureDescription}, {failedHost}, {failureCluster}, {failureClusterAlias}, {failureClusterDomain}, {failedPort}, {successorHost}, {successorPort}, {successorAlias}, {countSubordinates}, {subordinateHosts}, {isDowntimed}, {autoMainRecovery}, {autoIntermediateMainRecovery}
+	PreFailoverProcesses                         []string          // Processes to execute before doing a failover (aborting operation should any once of them exits with non-zero code; order of execution undefined). May and should use some of these placeholders: {failureType}, {failureDescription}, {failedHost}, {failureCluster}, {failureClusterAlias}, {failureClusterDomain}, {failedPort}, {successorHost}, {successorPort}, {successorAlias}, {countSubordinates}, {subordinateHosts}, {isDowntimed}
+	PostFailoverProcesses                        []string          // Processes to execute after doing a failover (order of execution undefined). May and should use some of these placeholders: {failureType}, {failureDescription}, {failedHost}, {failureCluster}, {failureClusterAlias}, {failureClusterDomain}, {failedPort}, {successorHost}, {successorPort}, {successorAlias}, {countSubordinates}, {subordinateHosts}, {isDowntimed}, {isSuccessful}, {lostSubordinates}
+	PostUnsuccessfulFailoverProcesses            []string          // Processes to execute after a not-completely-successful failover (order of execution undefined). May and should use some of these placeholders: {failureType}, {failureDescription}, {failedHost}, {failureCluster}, {failureClusterAlias}, {failureClusterDomain}, {failedPort}, {successorHost}, {successorPort}, {successorAlias}, {countSubordinates}, {subordinateHosts}, {isDowntimed}, {isSuccessful}, {lostSubordinates}
+	PostMainFailoverProcesses                  []string          // Processes to execute after doing a main failover (order of execution undefined). Uses same placeholders as PostFailoverProcesses
+	PostIntermediateMainFailoverProcesses      []string          // Processes to execute after doing a main failover (order of execution undefined). Uses same placeholders as PostFailoverProcesses
+	UnreachableMainWithStaleSubordinatesProcesses    []string          // Processes to execute when detecting an UnreachableMainWithStaleSubordinates scenario.
+	CoMainRecoveryMustPromoteOtherCoMain     bool              // When 'false', anything can get promoted (and candidates are prefered over others). When 'true', orchestrator will promote the other co-main or else fail
+	DetachLostSubordinatesAfterMainFailover          bool              // Should subordinates that are not to be lost in main recovery (i.e. were more up-to-date than promoted subordinate) be forcibly detached
+	ApplyMySQLPromotionAfterMainFailover       bool              // Should orchestrator take upon itself to apply MySQL main promotion: set read_only=0, detach replication, etc.
+	MainFailoverLostInstancesDowntimeMinutes   uint              // Number of minutes to downtime any server that was lost after a main failover (including failed main & lost subordinates). 0 to disable
+	MainFailoverDetachSubordinateMainHost          bool              // Should orchestrator issue a detach-subordinate-main-host on newly promoted main (this makes sure the new main will not attempt to replicate old main if that comes back to life). Defaults 'false'. Meaningless if ApplyMySQLPromotionAfterMainFailover is 'true'.
+	PostponeSubordinateRecoveryOnLagMinutes            uint              // On crash recovery, subordinates that are lagging more than given minutes are only resurrected late in the recovery process, after main/IM has been elected and processes executed. Value of 0 disables this feature
+	OSCIgnoreHostnameFilters                     []string          // OSC subordinates recommendation will ignore subordinate hostnames matching given patterns
 	GraphiteAddr                                 string            // Optional; address of graphite port. If supplied, metrics will be written here
 	GraphitePath                                 string            // Prefix for graphite path. May include {hostname} magic placeholder
 	GraphiteConvertHostnameDotsToUnderscores     bool              // If true, then hostname's dots are converted to underscores before being used in graphite path
@@ -236,8 +236,8 @@ func newConfiguration() *Configuration {
 		BinlogFileHistoryDays:                        0,
 		UnseenInstanceForgetHours:                    240,
 		SnapshotTopologiesIntervalHours:              0,
-		SlaveStartPostWaitMilliseconds:               1000,
-		DiscoverByShowSlaveHosts:                     false,
+		SubordinateStartPostWaitMilliseconds:               1000,
+		DiscoverByShowSubordinateHosts:                     false,
 		DiscoveryMaxConcurrency:                      300,
 		DiscoveryQueueCapacity:                       100000,
 		InstanceBulkOperationsWaitTimeoutSeconds:     10,
@@ -317,22 +317,22 @@ func newConfiguration() *Configuration {
 		RecoveryPeriodBlockMinutes:                   60,
 		RecoveryPeriodBlockSeconds:                   3600,
 		RecoveryIgnoreHostnameFilters:                []string{},
-		RecoverMasterClusterFilters:                  []string{},
-		RecoverIntermediateMasterClusterFilters:      []string{},
+		RecoverMainClusterFilters:                  []string{},
+		RecoverIntermediateMainClusterFilters:      []string{},
 		ProcessesShellCommand:                        "bash",
 		OnFailureDetectionProcesses:                  []string{},
 		PreFailoverProcesses:                         []string{},
-		PostMasterFailoverProcesses:                  []string{},
-		PostIntermediateMasterFailoverProcesses:      []string{},
+		PostMainFailoverProcesses:                  []string{},
+		PostIntermediateMainFailoverProcesses:      []string{},
 		PostFailoverProcesses:                        []string{},
 		PostUnsuccessfulFailoverProcesses:            []string{},
-		UnreachableMasterWithStaleSlavesProcesses:    []string{},
-		CoMasterRecoveryMustPromoteOtherCoMaster:     true,
-		DetachLostSlavesAfterMasterFailover:          true,
-		ApplyMySQLPromotionAfterMasterFailover:       false,
-		MasterFailoverLostInstancesDowntimeMinutes:   0,
-		MasterFailoverDetachSlaveMasterHost:          false,
-		PostponeSlaveRecoveryOnLagMinutes:            0,
+		UnreachableMainWithStaleSubordinatesProcesses:    []string{},
+		CoMainRecoveryMustPromoteOtherCoMain:     true,
+		DetachLostSubordinatesAfterMainFailover:          true,
+		ApplyMySQLPromotionAfterMainFailover:       false,
+		MainFailoverLostInstancesDowntimeMinutes:   0,
+		MainFailoverDetachSubordinateMainHost:          false,
+		PostponeSubordinateRecoveryOnLagMinutes:            0,
 		OSCIgnoreHostnameFilters:                     []string{},
 		GraphiteAddr:                                 "",
 		GraphitePath:                                 "",

@@ -329,8 +329,8 @@ func (this *HttpAPI) MoveUp(params martini.Params, r render.Render, req *http.Re
 	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Instance %+v moved up", instanceKey), Details: instance})
 }
 
-// MoveUpSlaves attempts to move up all slaves of an instance
-func (this *HttpAPI) MoveUpSlaves(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+// MoveUpSubordinates attempts to move up all subordinates of an instance
+func (this *HttpAPI) MoveUpSubordinates(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
@@ -341,17 +341,17 @@ func (this *HttpAPI) MoveUpSlaves(params martini.Params, r render.Render, req *h
 		return
 	}
 
-	slaves, newMaster, err, errs := inst.MoveUpSlaves(&instanceKey, req.URL.Query().Get("pattern"))
+	subordinates, newMain, err, errs := inst.MoveUpSubordinates(&instanceKey, req.URL.Query().Get("pattern"))
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
 
-	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Moved up %d slaves of %+v below %+v; %d errors: %+v", len(slaves), instanceKey, newMaster.Key, len(errs), errs), Details: newMaster.Key})
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Moved up %d subordinates of %+v below %+v; %d errors: %+v", len(subordinates), instanceKey, newMain.Key, len(errs), errs), Details: newMain.Key})
 }
 
-// MoveUpSlaves attempts to move up all slaves of an instance
-func (this *HttpAPI) RepointSlaves(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+// MoveUpSubordinates attempts to move up all subordinates of an instance
+func (this *HttpAPI) RepointSubordinates(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
@@ -362,17 +362,17 @@ func (this *HttpAPI) RepointSlaves(params martini.Params, r render.Render, req *
 		return
 	}
 
-	slaves, err, _ := inst.RepointSlaves(&instanceKey, req.URL.Query().Get("pattern"))
+	subordinates, err, _ := inst.RepointSubordinates(&instanceKey, req.URL.Query().Get("pattern"))
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
 
-	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Repointed %d slaves of %+v", len(slaves), instanceKey), Details: instanceKey})
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Repointed %d subordinates of %+v", len(subordinates), instanceKey), Details: instanceKey})
 }
 
-// MakeCoMaster attempts to make an instance co-master with its own master
-func (this *HttpAPI) MakeCoMaster(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+// MakeCoMain attempts to make an instance co-main with its own main
+func (this *HttpAPI) MakeCoMain(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
@@ -383,17 +383,17 @@ func (this *HttpAPI) MakeCoMaster(params martini.Params, r render.Render, req *h
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
-	instance, err := inst.MakeCoMaster(&instanceKey)
+	instance, err := inst.MakeCoMain(&instanceKey)
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
 
-	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Instance made co-master: %+v", instance.Key), Details: instance})
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Instance made co-main: %+v", instance.Key), Details: instance})
 }
 
-// ResetSlave makes a slave forget about its master, effectively breaking the replication
-func (this *HttpAPI) ResetSlave(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+// ResetSubordinate makes a subordinate forget about its main, effectively breaking the replication
+func (this *HttpAPI) ResetSubordinate(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
@@ -404,18 +404,18 @@ func (this *HttpAPI) ResetSlave(params martini.Params, r render.Render, req *htt
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
-	instance, err := inst.ResetSlaveOperation(&instanceKey)
+	instance, err := inst.ResetSubordinateOperation(&instanceKey)
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
 
-	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Slave reset on %+v", instance.Key), Details: instance})
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Subordinate reset on %+v", instance.Key), Details: instance})
 }
 
-// DetachSlave corrupts a slave's binlog corrdinates (though encodes it in such way
+// DetachSubordinate corrupts a subordinate's binlog corrdinates (though encodes it in such way
 // that is reversible), effectively breaking replication
-func (this *HttpAPI) DetachSlave(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+func (this *HttpAPI) DetachSubordinate(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
@@ -426,18 +426,18 @@ func (this *HttpAPI) DetachSlave(params martini.Params, r render.Render, req *ht
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
-	instance, err := inst.DetachSlaveOperation(&instanceKey)
+	instance, err := inst.DetachSubordinateOperation(&instanceKey)
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
 
-	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Slave detached: %+v", instance.Key), Details: instance})
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Subordinate detached: %+v", instance.Key), Details: instance})
 }
 
-// ReattachSlave reverts a DetachSlave commands by reassigning the correct
+// ReattachSubordinate reverts a DetachSubordinate commands by reassigning the correct
 // binlog coordinates to an instance
-func (this *HttpAPI) ReattachSlave(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+func (this *HttpAPI) ReattachSubordinate(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
@@ -448,18 +448,18 @@ func (this *HttpAPI) ReattachSlave(params martini.Params, r render.Render, req *
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
-	instance, err := inst.ReattachSlaveOperation(&instanceKey)
+	instance, err := inst.ReattachSubordinateOperation(&instanceKey)
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
 
-	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Slave reattached: %+v", instance.Key), Details: instance})
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Subordinate reattached: %+v", instance.Key), Details: instance})
 }
 
-// ReattachSlaveMasterHost reverts a DetachSlaveMasterHost command
-// by resoting the original master hostname in CHANGE MASTER TO
-func (this *HttpAPI) ReattachSlaveMasterHost(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+// ReattachSubordinateMainHost reverts a DetachSubordinateMainHost command
+// by resoting the original main hostname in CHANGE MASTER TO
+func (this *HttpAPI) ReattachSubordinateMainHost(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
@@ -470,16 +470,16 @@ func (this *HttpAPI) ReattachSlaveMasterHost(params martini.Params, r render.Ren
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
-	instance, err := inst.ReattachSlaveMasterHost(&instanceKey)
+	instance, err := inst.ReattachSubordinateMainHost(&instanceKey)
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
 
-	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Slave reattached: %+v", instance.Key), Details: instance})
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Subordinate reattached: %+v", instance.Key), Details: instance})
 }
 
-// EnableGTID attempts to enable GTID on a slave
+// EnableGTID attempts to enable GTID on a subordinate
 func (this *HttpAPI) EnableGTID(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
@@ -500,7 +500,7 @@ func (this *HttpAPI) EnableGTID(params martini.Params, r render.Render, req *htt
 	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Enabled GTID on %+v", instance.Key), Details: instance})
 }
 
-// DisableGTID attempts to disable GTID on a slave, and revert to binlog file:pos
+// DisableGTID attempts to disable GTID on a subordinate, and revert to binlog file:pos
 func (this *HttpAPI) DisableGTID(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
@@ -573,8 +573,8 @@ func (this *HttpAPI) MoveBelowGTID(params martini.Params, r render.Render, req *
 	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Instance %+v moved below %+v via GTID", instanceKey, belowKey), Details: instance})
 }
 
-// MoveSlavesGTID attempts to move an instance below another, via GTID
-func (this *HttpAPI) MoveSlavesGTID(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+// MoveSubordinatesGTID attempts to move an instance below another, via GTID
+func (this *HttpAPI) MoveSubordinatesGTID(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
@@ -590,17 +590,17 @@ func (this *HttpAPI) MoveSlavesGTID(params martini.Params, r render.Render, req 
 		return
 	}
 
-	movedSlaves, _, err, errs := inst.MoveSlavesGTID(&instanceKey, &belowKey, req.URL.Query().Get("pattern"))
+	movedSubordinates, _, err, errs := inst.MoveSubordinatesGTID(&instanceKey, &belowKey, req.URL.Query().Get("pattern"))
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
 
-	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Moved %d slaves of %+v below %+v via GTID; %d errors: %+v", len(movedSlaves), instanceKey, belowKey, len(errs), errs), Details: belowKey})
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Moved %d subordinates of %+v below %+v via GTID; %d errors: %+v", len(movedSubordinates), instanceKey, belowKey, len(errs), errs), Details: belowKey})
 }
 
-// EnslaveSiblings
-func (this *HttpAPI) EnslaveSiblings(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+// EnsubordinateSiblings
+func (this *HttpAPI) EnsubordinateSiblings(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
@@ -611,17 +611,17 @@ func (this *HttpAPI) EnslaveSiblings(params martini.Params, r render.Render, req
 		return
 	}
 
-	instance, count, err := inst.EnslaveSiblings(&instanceKey)
+	instance, count, err := inst.EnsubordinateSiblings(&instanceKey)
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
 
-	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Enslaved %d siblings of %+v", count, instanceKey), Details: instance})
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Ensubordinated %d siblings of %+v", count, instanceKey), Details: instance})
 }
 
-// EnslaveMaster
-func (this *HttpAPI) EnslaveMaster(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+// EnsubordinateMain
+func (this *HttpAPI) EnsubordinateMain(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
@@ -632,13 +632,13 @@ func (this *HttpAPI) EnslaveMaster(params martini.Params, r render.Render, req *
 		return
 	}
 
-	instance, err := inst.EnslaveMaster(&instanceKey)
+	instance, err := inst.EnsubordinateMain(&instanceKey)
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
 
-	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("%+v enslaved its master", instanceKey), Details: instance})
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("%+v ensubordinated its main", instanceKey), Details: instance})
 }
 
 // RelocateBelow attempts to move an instance below another, orchestrator choosing the best (potentially multi-step)
@@ -668,8 +668,8 @@ func (this *HttpAPI) RelocateBelow(params martini.Params, r render.Render, req *
 	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Instance %+v relocated below %+v", instanceKey, belowKey), Details: instance})
 }
 
-// RelocateSlaves attempts to smartly relocate slaves of a given instance below another
-func (this *HttpAPI) RelocateSlaves(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+// RelocateSubordinates attempts to smartly relocate subordinates of a given instance below another
+func (this *HttpAPI) RelocateSubordinates(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
@@ -685,16 +685,16 @@ func (this *HttpAPI) RelocateSlaves(params martini.Params, r render.Render, req 
 		return
 	}
 
-	slaves, _, err, errs := inst.RelocateSlaves(&instanceKey, &belowKey, req.URL.Query().Get("pattern"))
+	subordinates, _, err, errs := inst.RelocateSubordinates(&instanceKey, &belowKey, req.URL.Query().Get("pattern"))
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
 
-	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Relocated %d slaves of %+v below %+v; %d errors: %+v", len(slaves), instanceKey, belowKey, len(errs), errs), Details: slaves})
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Relocated %d subordinates of %+v below %+v; %d errors: %+v", len(subordinates), instanceKey, belowKey, len(errs), errs), Details: subordinates})
 }
 
-// MoveEquivalent attempts to move an instance below another, baseed on known equivalence master coordinates
+// MoveEquivalent attempts to move an instance below another, baseed on known equivalence main coordinates
 func (this *HttpAPI) MoveEquivalent(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
@@ -802,8 +802,8 @@ func (this *HttpAPI) MatchUp(params martini.Params, r render.Render, req *http.R
 	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Instance %+v matched up at %+v", instanceKey, *matchedCoordinates), Details: instance})
 }
 
-// MultiMatchSlaves attempts to match all slaves of a given instance below another, efficiently
-func (this *HttpAPI) MultiMatchSlaves(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+// MultiMatchSubordinates attempts to match all subordinates of a given instance below another, efficiently
+func (this *HttpAPI) MultiMatchSubordinates(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
@@ -819,17 +819,17 @@ func (this *HttpAPI) MultiMatchSlaves(params martini.Params, r render.Render, re
 		return
 	}
 
-	slaves, newMaster, err, errs := inst.MultiMatchSlaves(&instanceKey, &belowKey, req.URL.Query().Get("pattern"))
+	subordinates, newMain, err, errs := inst.MultiMatchSubordinates(&instanceKey, &belowKey, req.URL.Query().Get("pattern"))
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
 
-	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Matched %d slaves of %+v below %+v; %d errors: %+v", len(slaves), instanceKey, newMaster.Key, len(errs), errs), Details: newMaster.Key})
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Matched %d subordinates of %+v below %+v; %d errors: %+v", len(subordinates), instanceKey, newMain.Key, len(errs), errs), Details: newMain.Key})
 }
 
-// MatchUpSlaves attempts to match up all slaves of an instance
-func (this *HttpAPI) MatchUpSlaves(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+// MatchUpSubordinates attempts to match up all subordinates of an instance
+func (this *HttpAPI) MatchUpSubordinates(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
@@ -840,18 +840,18 @@ func (this *HttpAPI) MatchUpSlaves(params martini.Params, r render.Render, req *
 		return
 	}
 
-	slaves, newMaster, err, errs := inst.MatchUpSlaves(&instanceKey, req.URL.Query().Get("pattern"))
+	subordinates, newMain, err, errs := inst.MatchUpSubordinates(&instanceKey, req.URL.Query().Get("pattern"))
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
 
-	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Matched up %d slaves of %+v below %+v; %d errors: %+v", len(slaves), instanceKey, newMaster.Key, len(errs), errs), Details: newMaster.Key})
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Matched up %d subordinates of %+v below %+v; %d errors: %+v", len(subordinates), instanceKey, newMain.Key, len(errs), errs), Details: newMain.Key})
 }
 
-// RegroupSlaves attempts to pick a slave of a given instance and make it enslave its siblings, using any
+// RegroupSubordinates attempts to pick a subordinate of a given instance and make it ensubordinate its siblings, using any
 // method possible (GTID, Pseudo-GTID, binlog servers)
-func (this *HttpAPI) RegroupSlaves(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+func (this *HttpAPI) RegroupSubordinates(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
@@ -862,20 +862,20 @@ func (this *HttpAPI) RegroupSlaves(params martini.Params, r render.Render, req *
 		return
 	}
 
-	lostSlaves, equalSlaves, aheadSlaves, cannotReplicateSlaves, promotedSlave, err := inst.RegroupSlaves(&instanceKey, false, nil, nil)
-	lostSlaves = append(lostSlaves, cannotReplicateSlaves...)
+	lostSubordinates, equalSubordinates, aheadSubordinates, cannotReplicateSubordinates, promotedSubordinate, err := inst.RegroupSubordinates(&instanceKey, false, nil, nil)
+	lostSubordinates = append(lostSubordinates, cannotReplicateSubordinates...)
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
 
-	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("promoted slave: %s, lost: %d, trivial: %d, pseudo-gtid: %d",
-		promotedSlave.Key.DisplayString(), len(lostSlaves), len(equalSlaves), len(aheadSlaves)), Details: promotedSlave.Key})
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("promoted subordinate: %s, lost: %d, trivial: %d, pseudo-gtid: %d",
+		promotedSubordinate.Key.DisplayString(), len(lostSubordinates), len(equalSubordinates), len(aheadSubordinates)), Details: promotedSubordinate.Key})
 }
 
-// RegroupSlaves attempts to pick a slave of a given instance and make it enslave its siblings, efficiently,
+// RegroupSubordinates attempts to pick a subordinate of a given instance and make it ensubordinate its siblings, efficiently,
 // using pseudo-gtid if necessary
-func (this *HttpAPI) RegroupSlavesPseudoGTID(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+func (this *HttpAPI) RegroupSubordinatesPseudoGTID(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
@@ -886,20 +886,20 @@ func (this *HttpAPI) RegroupSlavesPseudoGTID(params martini.Params, r render.Ren
 		return
 	}
 
-	lostSlaves, equalSlaves, aheadSlaves, cannotReplicateSlaves, promotedSlave, err := inst.RegroupSlavesPseudoGTID(&instanceKey, false, nil, nil)
-	lostSlaves = append(lostSlaves, cannotReplicateSlaves...)
+	lostSubordinates, equalSubordinates, aheadSubordinates, cannotReplicateSubordinates, promotedSubordinate, err := inst.RegroupSubordinatesPseudoGTID(&instanceKey, false, nil, nil)
+	lostSubordinates = append(lostSubordinates, cannotReplicateSubordinates...)
 
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
 
-	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("promoted slave: %s, lost: %d, trivial: %d, pseudo-gtid: %d",
-		promotedSlave.Key.DisplayString(), len(lostSlaves), len(equalSlaves), len(aheadSlaves)), Details: promotedSlave.Key})
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("promoted subordinate: %s, lost: %d, trivial: %d, pseudo-gtid: %d",
+		promotedSubordinate.Key.DisplayString(), len(lostSubordinates), len(equalSubordinates), len(aheadSubordinates)), Details: promotedSubordinate.Key})
 }
 
-// RegroupSlavesGTID attempts to pick a slave of a given instance and make it enslave its siblings, efficiently, using GTID
-func (this *HttpAPI) RegroupSlavesGTID(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+// RegroupSubordinatesGTID attempts to pick a subordinate of a given instance and make it ensubordinate its siblings, efficiently, using GTID
+func (this *HttpAPI) RegroupSubordinatesGTID(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
@@ -910,20 +910,20 @@ func (this *HttpAPI) RegroupSlavesGTID(params martini.Params, r render.Render, r
 		return
 	}
 
-	lostSlaves, movedSlaves, cannotReplicateSlaves, promotedSlave, err := inst.RegroupSlavesGTID(&instanceKey, false, nil)
-	lostSlaves = append(lostSlaves, cannotReplicateSlaves...)
+	lostSubordinates, movedSubordinates, cannotReplicateSubordinates, promotedSubordinate, err := inst.RegroupSubordinatesGTID(&instanceKey, false, nil)
+	lostSubordinates = append(lostSubordinates, cannotReplicateSubordinates...)
 
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
 
-	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("promoted slave: %s, lost: %d, moved: %d",
-		promotedSlave.Key.DisplayString(), len(lostSlaves), len(movedSlaves)), Details: promotedSlave.Key})
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("promoted subordinate: %s, lost: %d, moved: %d",
+		promotedSubordinate.Key.DisplayString(), len(lostSubordinates), len(movedSubordinates)), Details: promotedSubordinate.Key})
 }
 
-// RegroupSlavesBinlogServers attempts to pick a slave of a given instance and make it enslave its siblings, efficiently, using GTID
-func (this *HttpAPI) RegroupSlavesBinlogServers(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+// RegroupSubordinatesBinlogServers attempts to pick a subordinate of a given instance and make it ensubordinate its siblings, efficiently, using GTID
+func (this *HttpAPI) RegroupSubordinatesBinlogServers(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
@@ -934,7 +934,7 @@ func (this *HttpAPI) RegroupSlavesBinlogServers(params martini.Params, r render.
 		return
 	}
 
-	_, promotedBinlogServer, err := inst.RegroupSlavesBinlogServers(&instanceKey, false)
+	_, promotedBinlogServer, err := inst.RegroupSubordinatesBinlogServers(&instanceKey, false)
 
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
@@ -945,8 +945,8 @@ func (this *HttpAPI) RegroupSlavesBinlogServers(params martini.Params, r render.
 		promotedBinlogServer.Key.DisplayString()), Details: promotedBinlogServer.Key})
 }
 
-// MakeMaster attempts to make the given instance a master, and match its siblings to be its slaves
-func (this *HttpAPI) MakeMaster(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+// MakeMain attempts to make the given instance a main, and match its siblings to be its subordinates
+func (this *HttpAPI) MakeMain(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
@@ -957,18 +957,18 @@ func (this *HttpAPI) MakeMaster(params martini.Params, r render.Render, req *htt
 		return
 	}
 
-	instance, err := inst.MakeMaster(&instanceKey)
+	instance, err := inst.MakeMain(&instanceKey)
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
 
-	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Instance %+v now made master", instanceKey), Details: instance})
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Instance %+v now made main", instanceKey), Details: instance})
 }
 
-// MakeLocalMaster attempts to make the given instance a local master: take over its master by
+// MakeLocalMain attempts to make the given instance a local main: take over its main by
 // enslaving its siblings and replicating from its grandparent.
-func (this *HttpAPI) MakeLocalMaster(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+func (this *HttpAPI) MakeLocalMain(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
@@ -979,13 +979,13 @@ func (this *HttpAPI) MakeLocalMaster(params martini.Params, r render.Render, req
 		return
 	}
 
-	instance, err := inst.MakeLocalMaster(&instanceKey)
+	instance, err := inst.MakeLocalMain(&instanceKey)
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
 
-	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Instance %+v now made local master", instanceKey), Details: instance})
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Instance %+v now made local main", instanceKey), Details: instance})
 }
 
 // SkipQuery skips a single query on a failed replication instance
@@ -1009,8 +1009,8 @@ func (this *HttpAPI) SkipQuery(params martini.Params, r render.Render, req *http
 	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Query skipped on %+v", instance.Key), Details: instance})
 }
 
-// StartSlave starts replication on given instance
-func (this *HttpAPI) StartSlave(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+// StartSubordinate starts replication on given instance
+func (this *HttpAPI) StartSubordinate(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
@@ -1021,17 +1021,17 @@ func (this *HttpAPI) StartSlave(params martini.Params, r render.Render, req *htt
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
-	instance, err := inst.StartSlave(&instanceKey)
+	instance, err := inst.StartSubordinate(&instanceKey)
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
 
-	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Slave started: %+v", instance.Key), Details: instance})
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Subordinate started: %+v", instance.Key), Details: instance})
 }
 
-// RestartSlave stops & starts replication on given instance
-func (this *HttpAPI) RestartSlave(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+// RestartSubordinate stops & starts replication on given instance
+func (this *HttpAPI) RestartSubordinate(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
@@ -1042,17 +1042,17 @@ func (this *HttpAPI) RestartSlave(params martini.Params, r render.Render, req *h
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
-	instance, err := inst.RestartSlave(&instanceKey)
+	instance, err := inst.RestartSubordinate(&instanceKey)
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
 
-	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Slave restarted: %+v", instance.Key), Details: instance})
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Subordinate restarted: %+v", instance.Key), Details: instance})
 }
 
-// StopSlave stops replication on given instance
-func (this *HttpAPI) StopSlave(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+// StopSubordinate stops replication on given instance
+func (this *HttpAPI) StopSubordinate(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
@@ -1063,17 +1063,17 @@ func (this *HttpAPI) StopSlave(params martini.Params, r render.Render, req *http
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
-	instance, err := inst.StopSlave(&instanceKey)
+	instance, err := inst.StopSubordinate(&instanceKey)
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
 
-	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Slave stopped: %+v", instance.Key), Details: instance})
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Subordinate stopped: %+v", instance.Key), Details: instance})
 }
 
-// StopSlaveNicely stops replication on given instance, such that sql thead is aligned with IO thread
-func (this *HttpAPI) StopSlaveNicely(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+// StopSubordinateNicely stops replication on given instance, such that sql thead is aligned with IO thread
+func (this *HttpAPI) StopSubordinateNicely(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
@@ -1084,17 +1084,17 @@ func (this *HttpAPI) StopSlaveNicely(params martini.Params, r render.Render, req
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
-	instance, err := inst.StopSlaveNicely(&instanceKey, 0)
+	instance, err := inst.StopSubordinateNicely(&instanceKey, 0)
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
 	}
 
-	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Slave stopped nicely: %+v", instance.Key), Details: instance})
+	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Subordinate stopped nicely: %+v", instance.Key), Details: instance})
 }
 
-// MasterEquivalent provides (possibly empty) list of master coordinates equivalent to the given ones
-func (this *HttpAPI) MasterEquivalent(params martini.Params, r render.Render, req *http.Request, user auth.User) {
+// MainEquivalent provides (possibly empty) list of main coordinates equivalent to the given ones
+func (this *HttpAPI) MainEquivalent(params martini.Params, r render.Render, req *http.Request, user auth.User) {
 	if !isAuthorizedForAction(req, user) {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: "Unauthorized"})
 		return
@@ -1111,7 +1111,7 @@ func (this *HttpAPI) MasterEquivalent(params martini.Params, r render.Render, re
 	}
 	instanceCoordinates := &inst.InstanceBinlogCoordinates{Key: instanceKey, Coordinates: coordinates}
 
-	equivalentCoordinates, err := inst.GetEquivalentMasterCoordinates(instanceCoordinates)
+	equivalentCoordinates, err := inst.GetEquivalentMainCoordinates(instanceCoordinates)
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})
 		return
@@ -1253,9 +1253,9 @@ func (this *HttpAPI) ClusterInfoByAlias(params martini.Params, r render.Render, 
 	this.ClusterInfo(params, r, req)
 }
 
-// ClusterOSCSlaves returns heuristic list of OSC slaves
-func (this *HttpAPI) ClusterOSCSlaves(params martini.Params, r render.Render, req *http.Request) {
-	instances, err := inst.GetClusterOSCSlaves(params["clusterName"])
+// ClusterOSCSubordinates returns heuristic list of OSC subordinates
+func (this *HttpAPI) ClusterOSCSubordinates(params martini.Params, r render.Render, req *http.Request) {
+	instances, err := inst.GetClusterOSCSubordinates(params["clusterName"])
 
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
@@ -2059,8 +2059,8 @@ func (this *HttpAPI) RegisterCandidate(params martini.Params, r render.Render, r
 // AutomatedRecoveryFilters retuens list of clusters which are configured with automated recovery
 func (this *HttpAPI) AutomatedRecoveryFilters(params martini.Params, r render.Render, req *http.Request) {
 	automatedRecoveryMap := make(map[string]interface{})
-	automatedRecoveryMap["RecoverMasterClusterFilters"] = config.Config.RecoverMasterClusterFilters
-	automatedRecoveryMap["RecoverIntermediateMasterClusterFilters"] = config.Config.RecoverIntermediateMasterClusterFilters
+	automatedRecoveryMap["RecoverMainClusterFilters"] = config.Config.RecoverMainClusterFilters
+	automatedRecoveryMap["RecoverIntermediateMainClusterFilters"] = config.Config.RecoverIntermediateMainClusterFilters
 	automatedRecoveryMap["RecoveryIgnoreHostnameFilters"] = config.Config.RecoveryIgnoreHostnameFilters
 
 	r.JSON(200, &APIResponse{Code: OK, Message: fmt.Sprintf("Automated recovery configuration details"), Details: automatedRecoveryMap})
@@ -2281,52 +2281,52 @@ func (this *HttpAPI) RegisterRequests(m *martini.ClassicMartini) {
 	// Smart relocation:
 	m.Get(this.URLPrefix+"/api/relocate/:host/:port/:belowHost/:belowPort", this.RelocateBelow)
 	m.Get(this.URLPrefix+"/api/relocate-below/:host/:port/:belowHost/:belowPort", this.RelocateBelow)
-	m.Get(this.URLPrefix+"/api/relocate-slaves/:host/:port/:belowHost/:belowPort", this.RelocateSlaves)
-	m.Get(this.URLPrefix+"/api/regroup-slaves/:host/:port", this.RegroupSlaves)
+	m.Get(this.URLPrefix+"/api/relocate-subordinates/:host/:port/:belowHost/:belowPort", this.RelocateSubordinates)
+	m.Get(this.URLPrefix+"/api/regroup-subordinates/:host/:port", this.RegroupSubordinates)
 
 	// Classic file:pos relocation:
 	m.Get(this.URLPrefix+"/api/move-up/:host/:port", this.MoveUp)
-	m.Get(this.URLPrefix+"/api/move-up-slaves/:host/:port", this.MoveUpSlaves)
+	m.Get(this.URLPrefix+"/api/move-up-subordinates/:host/:port", this.MoveUpSubordinates)
 	m.Get(this.URLPrefix+"/api/move-below/:host/:port/:siblingHost/:siblingPort", this.MoveBelow)
 	m.Get(this.URLPrefix+"/api/move-equivalent/:host/:port/:belowHost/:belowPort", this.MoveEquivalent)
-	m.Get(this.URLPrefix+"/api/repoint-slaves/:host/:port", this.RepointSlaves)
-	m.Get(this.URLPrefix+"/api/make-co-master/:host/:port", this.MakeCoMaster)
-	m.Get(this.URLPrefix+"/api/enslave-siblings/:host/:port", this.EnslaveSiblings)
-	m.Get(this.URLPrefix+"/api/enslave-master/:host/:port", this.EnslaveMaster)
-	m.Get(this.URLPrefix+"/api/master-equivalent/:host/:port/:logFile/:logPos", this.MasterEquivalent)
+	m.Get(this.URLPrefix+"/api/repoint-subordinates/:host/:port", this.RepointSubordinates)
+	m.Get(this.URLPrefix+"/api/make-co-main/:host/:port", this.MakeCoMain)
+	m.Get(this.URLPrefix+"/api/ensubordinate-siblings/:host/:port", this.EnsubordinateSiblings)
+	m.Get(this.URLPrefix+"/api/ensubordinate-main/:host/:port", this.EnsubordinateMain)
+	m.Get(this.URLPrefix+"/api/main-equivalent/:host/:port/:logFile/:logPos", this.MainEquivalent)
 
 	// Binlog server relocation:
-	m.Get(this.URLPrefix+"/api/regroup-slaves-bls/:host/:port", this.RegroupSlavesBinlogServers)
+	m.Get(this.URLPrefix+"/api/regroup-subordinates-bls/:host/:port", this.RegroupSubordinatesBinlogServers)
 
 	// GTID relocation:
 	m.Get(this.URLPrefix+"/api/move-below-gtid/:host/:port/:belowHost/:belowPort", this.MoveBelowGTID)
-	m.Get(this.URLPrefix+"/api/move-slaves-gtid/:host/:port/:belowHost/:belowPort", this.MoveSlavesGTID)
-	m.Get(this.URLPrefix+"/api/regroup-slaves-gtid/:host/:port", this.RegroupSlavesGTID)
+	m.Get(this.URLPrefix+"/api/move-subordinates-gtid/:host/:port/:belowHost/:belowPort", this.MoveSubordinatesGTID)
+	m.Get(this.URLPrefix+"/api/regroup-subordinates-gtid/:host/:port", this.RegroupSubordinatesGTID)
 
 	// Pseudo-GTID relocation:
 	m.Get(this.URLPrefix+"/api/match/:host/:port/:belowHost/:belowPort", this.MatchBelow)
 	m.Get(this.URLPrefix+"/api/match-below/:host/:port/:belowHost/:belowPort", this.MatchBelow)
 	m.Get(this.URLPrefix+"/api/match-up/:host/:port", this.MatchUp)
-	m.Get(this.URLPrefix+"/api/match-slaves/:host/:port/:belowHost/:belowPort", this.MultiMatchSlaves)
-	m.Get(this.URLPrefix+"/api/multi-match-slaves/:host/:port/:belowHost/:belowPort", this.MultiMatchSlaves)
-	m.Get(this.URLPrefix+"/api/match-up-slaves/:host/:port", this.MatchUpSlaves)
-	m.Get(this.URLPrefix+"/api/regroup-slaves-pgtid/:host/:port", this.RegroupSlavesPseudoGTID)
+	m.Get(this.URLPrefix+"/api/match-subordinates/:host/:port/:belowHost/:belowPort", this.MultiMatchSubordinates)
+	m.Get(this.URLPrefix+"/api/multi-match-subordinates/:host/:port/:belowHost/:belowPort", this.MultiMatchSubordinates)
+	m.Get(this.URLPrefix+"/api/match-up-subordinates/:host/:port", this.MatchUpSubordinates)
+	m.Get(this.URLPrefix+"/api/regroup-subordinates-pgtid/:host/:port", this.RegroupSubordinatesPseudoGTID)
 	// Legacy, need to revisit:
-	m.Get(this.URLPrefix+"/api/make-master/:host/:port", this.MakeMaster)
-	m.Get(this.URLPrefix+"/api/make-local-master/:host/:port", this.MakeLocalMaster)
+	m.Get(this.URLPrefix+"/api/make-main/:host/:port", this.MakeMain)
+	m.Get(this.URLPrefix+"/api/make-local-main/:host/:port", this.MakeLocalMain)
 
 	// Replication, general:
 	m.Get(this.URLPrefix+"/api/enable-gtid/:host/:port", this.EnableGTID)
 	m.Get(this.URLPrefix+"/api/disable-gtid/:host/:port", this.DisableGTID)
 	m.Get(this.URLPrefix+"/api/skip-query/:host/:port", this.SkipQuery)
-	m.Get(this.URLPrefix+"/api/start-slave/:host/:port", this.StartSlave)
-	m.Get(this.URLPrefix+"/api/restart-slave/:host/:port", this.RestartSlave)
-	m.Get(this.URLPrefix+"/api/stop-slave/:host/:port", this.StopSlave)
-	m.Get(this.URLPrefix+"/api/stop-slave-nice/:host/:port", this.StopSlaveNicely)
-	m.Get(this.URLPrefix+"/api/reset-slave/:host/:port", this.ResetSlave)
-	m.Get(this.URLPrefix+"/api/detach-slave/:host/:port", this.DetachSlave)
-	m.Get(this.URLPrefix+"/api/reattach-slave/:host/:port", this.ReattachSlave)
-	m.Get(this.URLPrefix+"/api/reattach-slave-master-host/:host/:port", this.ReattachSlaveMasterHost)
+	m.Get(this.URLPrefix+"/api/start-subordinate/:host/:port", this.StartSubordinate)
+	m.Get(this.URLPrefix+"/api/restart-subordinate/:host/:port", this.RestartSubordinate)
+	m.Get(this.URLPrefix+"/api/stop-subordinate/:host/:port", this.StopSubordinate)
+	m.Get(this.URLPrefix+"/api/stop-subordinate-nice/:host/:port", this.StopSubordinateNicely)
+	m.Get(this.URLPrefix+"/api/reset-subordinate/:host/:port", this.ResetSubordinate)
+	m.Get(this.URLPrefix+"/api/detach-subordinate/:host/:port", this.DetachSubordinate)
+	m.Get(this.URLPrefix+"/api/reattach-subordinate/:host/:port", this.ReattachSubordinate)
+	m.Get(this.URLPrefix+"/api/reattach-subordinate-main-host/:host/:port", this.ReattachSubordinateMainHost)
 
 	// Instance:
 	m.Get(this.URLPrefix+"/api/set-read-only/:host/:port", this.SetReadOnly)
@@ -2355,7 +2355,7 @@ func (this *HttpAPI) RegisterRequests(m *martini.ClassicMartini) {
 	m.Get(this.URLPrefix+"/api/cluster/instance/:host/:port", this.ClusterByInstance)
 	m.Get(this.URLPrefix+"/api/cluster-info/:clusterName", this.ClusterInfo)
 	m.Get(this.URLPrefix+"/api/cluster-info/alias/:clusterAlias", this.ClusterInfoByAlias)
-	m.Get(this.URLPrefix+"/api/cluster-osc-slaves/:clusterName", this.ClusterOSCSlaves)
+	m.Get(this.URLPrefix+"/api/cluster-osc-subordinates/:clusterName", this.ClusterOSCSubordinates)
 	m.Get(this.URLPrefix+"/api/set-cluster-alias/:clusterName", this.SetClusterAlias)
 	m.Get(this.URLPrefix+"/api/clusters", this.Clusters)
 	m.Get(this.URLPrefix+"/api/clusters-info", this.ClustersInfo)

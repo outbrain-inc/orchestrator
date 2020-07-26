@@ -25,56 +25,56 @@ type StructureAnalysisCode string
 
 const (
 	NoProblem                                             AnalysisCode = "NoProblem"
-	DeadMasterWithoutSlaves                                            = "DeadMasterWithoutSlaves"
-	DeadMaster                                                         = "DeadMaster"
-	DeadMasterAndSlaves                                                = "DeadMasterAndSlaves"
-	DeadMasterAndSomeSlaves                                            = "DeadMasterAndSomeSlaves"
-	UnreachableMasterWithStaleSlaves                                   = "UnreachableMasterWithStaleSlaves"
-	UnreachableMaster                                                  = "UnreachableMaster"
-	MasterSingleSlaveNotReplicating                                    = "MasterSingleSlaveNotReplicating"
-	MasterSingleSlaveDead                                              = "MasterSingleSlaveDead"
-	AllMasterSlavesNotReplicating                                      = "AllMasterSlavesNotReplicating"
-	AllMasterSlavesNotReplicatingOrDead                                = "AllMasterSlavesNotReplicatingOrDead"
-	AllMasterSlavesStale                                               = "AllMasterSlavesStale"
-	MasterWithoutSlaves                                                = "MasterWithoutSlaves"
-	DeadCoMaster                                                       = "DeadCoMaster"
-	DeadCoMasterAndSomeSlaves                                          = "DeadCoMasterAndSomeSlaves"
-	UnreachableCoMaster                                                = "UnreachableCoMaster"
-	AllCoMasterSlavesNotReplicating                                    = "AllCoMasterSlavesNotReplicating"
-	DeadIntermediateMaster                                             = "DeadIntermediateMaster"
-	DeadIntermediateMasterWithSingleSlave                              = "DeadIntermediateMasterWithSingleSlave"
-	DeadIntermediateMasterWithSingleSlaveFailingToConnect              = "DeadIntermediateMasterWithSingleSlaveFailingToConnect"
-	DeadIntermediateMasterAndSomeSlaves                                = "DeadIntermediateMasterAndSomeSlaves"
-	UnreachableIntermediateMaster                                      = "UnreachableIntermediateMaster"
-	AllIntermediateMasterSlavesFailingToConnectOrDead                  = "AllIntermediateMasterSlavesFailingToConnectOrDead"
-	AllIntermediateMasterSlavesNotReplicating                          = "AllIntermediateMasterSlavesNotReplicating"
-	FirstTierSlaveFailingToConnectToMaster                             = "FirstTierSlaveFailingToConnectToMaster"
-	BinlogServerFailingToConnectToMaster                               = "BinlogServerFailingToConnectToMaster"
+	DeadMainWithoutSubordinates                                            = "DeadMainWithoutSubordinates"
+	DeadMain                                                         = "DeadMain"
+	DeadMainAndSubordinates                                                = "DeadMainAndSubordinates"
+	DeadMainAndSomeSubordinates                                            = "DeadMainAndSomeSubordinates"
+	UnreachableMainWithStaleSubordinates                                   = "UnreachableMainWithStaleSubordinates"
+	UnreachableMain                                                  = "UnreachableMain"
+	MainSingleSubordinateNotReplicating                                    = "MainSingleSubordinateNotReplicating"
+	MainSingleSubordinateDead                                              = "MainSingleSubordinateDead"
+	AllMainSubordinatesNotReplicating                                      = "AllMainSubordinatesNotReplicating"
+	AllMainSubordinatesNotReplicatingOrDead                                = "AllMainSubordinatesNotReplicatingOrDead"
+	AllMainSubordinatesStale                                               = "AllMainSubordinatesStale"
+	MainWithoutSubordinates                                                = "MainWithoutSubordinates"
+	DeadCoMain                                                       = "DeadCoMain"
+	DeadCoMainAndSomeSubordinates                                          = "DeadCoMainAndSomeSubordinates"
+	UnreachableCoMain                                                = "UnreachableCoMain"
+	AllCoMainSubordinatesNotReplicating                                    = "AllCoMainSubordinatesNotReplicating"
+	DeadIntermediateMain                                             = "DeadIntermediateMain"
+	DeadIntermediateMainWithSingleSubordinate                              = "DeadIntermediateMainWithSingleSubordinate"
+	DeadIntermediateMainWithSingleSubordinateFailingToConnect              = "DeadIntermediateMainWithSingleSubordinateFailingToConnect"
+	DeadIntermediateMainAndSomeSubordinates                                = "DeadIntermediateMainAndSomeSubordinates"
+	UnreachableIntermediateMain                                      = "UnreachableIntermediateMain"
+	AllIntermediateMainSubordinatesFailingToConnectOrDead                  = "AllIntermediateMainSubordinatesFailingToConnectOrDead"
+	AllIntermediateMainSubordinatesNotReplicating                          = "AllIntermediateMainSubordinatesNotReplicating"
+	FirstTierSubordinateFailingToConnectToMain                             = "FirstTierSubordinateFailingToConnectToMain"
+	BinlogServerFailingToConnectToMain                               = "BinlogServerFailingToConnectToMain"
 )
 
 const (
-	StatementAndMixedLoggingSlavesStructureWarning StructureAnalysisCode = "StatementAndMixedLoggingSlavesStructureWarning"
-	StatementAndRowLoggingSlavesStructureWarning                         = "StatementAndRowLoggingSlavesStructureWarning"
-	MixedAndRowLoggingSlavesStructureWarning                             = "MixedAndRowLoggingSlavesStructureWarning"
-	MultipleMajorVersionsLoggingSlaves                                   = "MultipleMajorVersionsLoggingSlaves"
+	StatementAndMixedLoggingSubordinatesStructureWarning StructureAnalysisCode = "StatementAndMixedLoggingSubordinatesStructureWarning"
+	StatementAndRowLoggingSubordinatesStructureWarning                         = "StatementAndRowLoggingSubordinatesStructureWarning"
+	MixedAndRowLoggingSubordinatesStructureWarning                             = "MixedAndRowLoggingSubordinatesStructureWarning"
+	MultipleMajorVersionsLoggingSubordinates                                   = "MultipleMajorVersionsLoggingSubordinates"
 )
 
 // ReplicationAnalysis notes analysis on replication chain status, per instance
 type ReplicationAnalysis struct {
 	AnalyzedInstanceKey                     InstanceKey
-	AnalyzedInstanceMasterKey               InstanceKey
+	AnalyzedInstanceMainKey               InstanceKey
 	ClusterDetails                          ClusterInfo
-	IsMaster                                bool
-	IsCoMaster                              bool
+	IsMain                                bool
+	IsCoMain                              bool
 	LastCheckValid                          bool
-	CountSlaves                             uint
-	CountValidSlaves                        uint
-	CountValidReplicatingSlaves             uint
-	CountSlavesFailingToConnectToMaster     uint
-	CountStaleSlaves                        uint
+	CountSubordinates                             uint
+	CountValidSubordinates                        uint
+	CountValidReplicatingSubordinates             uint
+	CountSubordinatesFailingToConnectToMain     uint
+	CountStaleSubordinates                        uint
 	ReplicationDepth                        uint
-	SlaveHosts                              InstanceKeyMap
-	IsFailingToConnectToMaster              bool
+	SubordinateHosts                              InstanceKeyMap
+	IsFailingToConnectToMain              bool
 	Analysis                                AnalysisCode
 	Description                             string
 	StructureAnalysis                       []StructureAnalysisCode
@@ -86,10 +86,10 @@ type ReplicationAnalysis struct {
 	OracleGTIDImmediateTopology             bool
 	MariaDBGTIDImmediateTopology            bool
 	BinlogServerImmediateTopology           bool
-	CountStatementBasedLoggingSlaves        uint
-	CountMixedBasedLoggingSlaves            uint
-	CountRowBasedLoggingSlaves              uint
-	CountDistinctMajorVersionsLoggingSlaves uint
+	CountStatementBasedLoggingSubordinates        uint
+	CountMixedBasedLoggingSubordinates            uint
+	CountRowBasedLoggingSubordinates              uint
+	CountDistinctMajorVersionsLoggingSubordinates uint
 }
 
 type ReplicationAnalysisChangelog struct {
@@ -97,10 +97,10 @@ type ReplicationAnalysisChangelog struct {
 	Changelog           string
 }
 
-// ReadSlaveHostsFromString parses and reads slave keys from comma delimited string
-func (this *ReplicationAnalysis) ReadSlaveHostsFromString(slaveHostsString string) error {
-	this.SlaveHosts = *NewInstanceKeyMap()
-	return this.SlaveHosts.ReadCommaDelimitedList(slaveHostsString)
+// ReadSubordinateHostsFromString parses and reads subordinate keys from comma delimited string
+func (this *ReplicationAnalysis) ReadSubordinateHostsFromString(subordinateHostsString string) error {
+	this.SubordinateHosts = *NewInstanceKeyMap()
+	return this.SubordinateHosts.ReadCommaDelimitedList(subordinateHostsString)
 }
 
 // AnalysisString returns a human friendly description of all analysis issues
